@@ -1,0 +1,16 @@
+.env
+*.sqlite3
+*.db
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.xlsx
+*.xls
+*.csv
+*.sql.gz
+*.bak
+*.zip
+*.log
+uploads/
+backup/
