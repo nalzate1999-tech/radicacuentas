@@ -136,3 +136,31 @@ def test_invitation_activation_and_form_permissions():
     assert user_client.get('/casos?accion=revision').status_code==403
     assert user_client.get('/informes').status_code==200
     assert user_client.get('/informes/casos.csv').status_code==403
+
+
+def test_historical_case_dedup_and_technical_result():
+    from datetime import datetime, timezone
+    from app.models import Subtask
+    from app.services import create_case, apply_legal, BusinessError
+    with SessionLocal.begin() as db:
+        imported=Case(id_caso='HIST-00001',source='import',period='202611',
+                      contract_no='QA-HIST-1',document='10000000',
+                      contractor_name='Persona histórica',current_status='RECIBIDA',
+                      requires_technical=True,requires_legal=False)
+        db.add(imported)
+    values={'contractor_type':'CC','contractor_name':'Duplicado',
+            'document':'10000000','contract_no':'QA-HIST-1','period':'202611',
+            'amount':'10000','contractor_email':'test@example.org',
+            'followup_assignee':'Brayan','sent_by':'Supervisor'}
+    import pytest
+    with SessionLocal.begin() as db:
+        with pytest.raises(BusinessError,match='HIST-00001'):
+            create_case(db,values,'qa@example.org')
+    with SessionLocal.begin() as db:
+        case=db.get(Case,'HIST-00001')
+        apply_legal(db,case,'Técnica','Soluciones Territoriales','Aprobado',
+                    'Aprobación de firma técnica',actor='qa@example.org')
+        assert case.current_status=='APROBADA_FIRMA_REVISORA_TECNICA'
+        db.flush()
+        assert db.scalars(select(Event).where(Event.case_id==case.id_caso,
+                              Event.kind=='APROBADA_FIRMA_REVISORA_TECNICA')).all()

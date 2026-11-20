@@ -9,7 +9,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import select, func
 from app.database import SessionLocal
 from app.models import (ImportBatch,SourceSheet,RawRow,Case,Event,Subtask,
-                        RadContract,FormResponse,LegacyLog,ImportIssue)
+                        RadContract,FormResponse,ImportIssue)
 
 
 def main():
@@ -33,7 +33,7 @@ def main():
             print(f'  {result:5} {name}: esperado={expected[name]}, SQL={actual.get(name,0)}')
         for label,model in [('Casos',Case),('Eventos',Event),('Subtareas',Subtask),
                             ('Contratos RAD',RadContract),('Respuestas formulario',FormResponse),
-                            ('LOG histórico',LegacyLog),('Novedades conciliación',ImportIssue)]:
+                            ('Novedades conciliación',ImportIssue)]:
             print(label,db.scalar(select(func.count()).select_from(model)))
         if expected!=actual:raise SystemExit('FAIL: existen diferencias de filas.')
         print('OK: integridad de filas crudas verificada. Pendiente: conciliar registros ambiguos.')

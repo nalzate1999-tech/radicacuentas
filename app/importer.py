@@ -1,4 +1,4 @@
-"""Migración histórica: 13 pestañas completas + tablas consultables. Nunca sobrescribe el origen."""
+"""Migración funcional: datos operativos, no logs ni tablas derivadas de Google Sheets."""
 from __future__ import annotations
 import hashlib
 import json
@@ -10,11 +10,14 @@ from openpyxl import load_workbook
 from sqlalchemy import insert, select, func
 from .database import SessionLocal
 from .models import (Case, Event, Subtask, RadContract, RadMonth, Personnel, Holiday,
-                     ImportBatch, SourceSheet, RawRow, FormResponse, ImportIssue, LegacyLog)
+                     ImportBatch, SourceSheet, RawRow, FormResponse, ImportIssue)
 from .services import BOGOTA, parse_period, parse_money, is_yes, clean_text, normalize
 
 FORM_SHEETS = {f'Respuestas de formulario {n}':name for n,name in [(1,'registro'),(2,'revisor'),(3,'seguimiento'),(4,'abogados')]}
 MONTH_NAMES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+# Son salidas técnicas de Apps Script o reportes derivables; no son datos de negocio.
+EXCLUDED_SHEETS = frozenset({'LOG', 'TABLERO', 'INFORME SEGUIDORES'})
+REQUIRED_SHEETS = frozenset({'CASOS', 'EVENTOS', 'SUBTAREAS', 'SEG RADICACION', *FORM_SHEETS})
 
 def value_json(v):
     if v is None:return None
@@ -77,8 +80,15 @@ def migrate_workbook(file_path, dry_run=False, verbose=False):
             raise ValueError('La base destino ya contiene datos. Para evitar mezclas, migre primero a una base vacía.')
         batch=ImportBatch(source_name=path.name,sha256=sha,status='EN_CURSO',summary={})
         db.add(batch);db.flush()
+        missing=REQUIRED_SHEETS.difference(formula_wb.sheetnames)
+        if missing:raise ValueError('Faltan hojas operativas: '+', '.join(sorted(missing)))
         counts={};all_rows={}; headers_by_sheet={}
+        excluded_counts={}
         for sh in formula_wb:
+            if sh.title in EXCLUDED_SHEETS:
+                excluded_counts[sh.title]='omitida'
+                if verbose:print('Omitida (derivada/técnica):',sh.title,flush=True)
+                continue
             cached=value_wb[sh.title]
             cached.reset_dimensions()
             crows=cached.iter_rows(values_only=True)
@@ -165,6 +175,14 @@ def migrate_workbook(file_path, dry_run=False, verbose=False):
             raw_id=str_clean(r.get('ID_CASO'))
             if raw_id and raw_id not in existing:
                 issue(db,batch,'EVENTOS',rn,'EVENTO_HUERFANO',f'ID sin coincidencia en CASOS: {raw_id}')
+            if raw_id in existing:
+                # Los eventos antiguos también acreditan frentes tramitados,
+                # aunque el registro original esté desvinculado de un Formulario 1.
+                tag=str_clean(r.get('Tipo_Subtarea')).upper()
+                target=db.get(Case,raw_id)
+                if tag=='REVISOR':target.requires_reviewer=True
+                elif tag=='TECNICA':target.requires_technical=True
+                elif tag=='JURIDICA':target.requires_legal=True
             db.add(Event(case_id=raw_id if raw_id in existing else None,
                 raw_case_id=raw_id,task_id=str_clean(r.get('ID_SUBTAREA')) or None,
                 occurred_at=to_dt(r.get('Timestamp_Evento')),
@@ -188,8 +206,14 @@ def migrate_workbook(file_path, dry_run=False, verbose=False):
                 task_id=f'MIG-SUB-FILA-{rn:06d}'
             if case_id and case_id not in existing:
                 issue(db,batch,'SUBTAREAS',rn,'SUBTAREA_HUERFANA',f'ID {case_id}')
+            task_kind=str_clean(r.get('Tipo_Subtarea')).upper()
+            if case_id in existing:
+                target=db.get(Case,case_id)
+                if task_kind=='REVISOR':target.requires_reviewer=True
+                elif task_kind=='TECNICA':target.requires_technical=True
+                elif task_kind=='JURIDICA':target.requires_legal=True
             db.add(Subtask(id=task_id,case_id=case_id if case_id in existing else None,
-                raw_case_id=case_id,kind=str_clean(r.get('Tipo_Subtarea')),
+                raw_case_id=case_id,kind=task_kind,
                 provider=str_clean(r.get('Proveedor')),
                 status=str_clean(r.get('Estado_Subtarea')) or 'PENDIENTE',
                 responsible=str_clean(r.get('Responsable_Subtarea')),
@@ -251,15 +275,17 @@ def migrate_workbook(file_path, dry_run=False, verbose=False):
                     else:issue(db,batch,sn,rn,'FORM1_SIN_VINCULO','No hubo coincidencia exacta y única.')
                 elif raw_id and raw_id not in existing:
                     issue(db,batch,sn,rn,'FORMULARIO_HUERFANO',f'ID sin coincidencia: {raw_id}')
+                if case_id and formtype=='registro':
+                    target=db.get(Case,case_id)
+                    for name,field in [('¿Requiere revisión del revisor?','requires_reviewer'),
+                                       ('¿Requiere revisión técnica?','requires_technical'),
+                                       ('¿Requiere revisión jurídica?','requires_legal')]:
+                        if is_yes(r.get(name)):
+                            setattr(target,field,True)
                 db.add(FormResponse(source_type='historico-'+formtype,source_row=rn,
                     submitted_at=to_dt(r.get('Marca temporal')),case_id=case_id,
                     raw_case_id=raw_id,submitted_by=str_clean(r.get('Dirección de correo electrónico')),
                     values={k:value_json(v) for k,v in r.items()}))
-        for rn,r in all_rows.get('LOG',[]):
-            db.add(LegacyLog(created_at=to_dt(r.get('Timestamp')),
-                level=str_clean(r.get('Nivel')),process=str_clean(r.get('Proceso')),
-                case_id=str_clean(r.get('ID_CASO')),
-                detail=str_clean(r.get('Detalle')),actor=str_clean(r.get('Usuario')),source_row=rn))
         db.flush()
         issue_summary={name:n for name,n in db.execute(select(ImportIssue.category,func.count(ImportIssue.id)).where(ImportIssue.batch_id==batch.id).group_by(ImportIssue.category)).all()}
         summary={'source_file_sha256':sha,'source_rows_by_sheet':counts,'cases':case_count,
@@ -267,7 +293,7 @@ def migrate_workbook(file_path, dry_run=False, verbose=False):
             'subtasks':len(all_rows.get('SUBTAREAS',[])),
             'rad_contracts':len(all_rows.get('SEG RADICACION',[])),
             'form_responses':sum(len(all_rows.get(x,[])) for x in FORM_SHEETS),
-            'legacy_logs':len(all_rows.get('LOG',[])),
+            'omitted_technical_sheets':excluded_counts,
             'issues_by_category':issue_summary,'raw_rows_total':sum(counts.values())}
         batch.status='COMPLETADA';batch.summary=summary
         if dry_run:db.rollback()

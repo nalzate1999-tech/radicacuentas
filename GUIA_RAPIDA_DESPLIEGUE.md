@@ -28,7 +28,7 @@
 - La edición de usuarios, el histórico y la auditoría son exclusivos del administrador.
 - El **registro de cuentas no solicita cargar archivos**. Los enlaces anteriores se conservan exclusivamente al migrar los datos.
 
-## Migrar los 13 conjuntos de datos desde el aplicativo
+## Migrar los datos operativos desde el aplicativo
 
 1. Es indispensable hacerlo **antes de registrar nuevas cuentas** en la nueva base; el importador rechaza una mezcla insegura de histórico y casos nuevos.
 2. Descarga la fuente original `Rev cuentas.xlsx` de la ubicación institucional autorizada.
@@ -38,17 +38,17 @@
 
 | Resultado de conciliación local | Valor |
 | --- | ---: |
-| Hojas | 13 |
-| Filas originales preservadas | 43.800 |
+| Hojas de origen utilizadas | 10 (9 con registros) |
+| Filas operativas preservadas | 18.490 |
 | Expedientes importados | 1.292 |
 | Eventos | 8.555 |
 | Subtareas | 157 |
 | Contratos de radicación | 112 |
 | Respuestas históricas de formularios | 8.371 |
-| Registros de bitácora | 23.288 |
+| Hojas omitidas | LOG, TABLERO, INFORME SEGUIDORES |
 | Incidencias de conciliación | 1.371 |
 
-Los datos con identificadores incompletos se preservan como origen y se muestran para revisión. Los archivos vinculados de Google Drive **no cambian de permisos** ni se suben de manera automática.
+Los registros de LOG (23.288), TABLERO (25) e INFORME SEGUIDORES (1.997) se omiten porque los nuevos indicadores y auditoría se calculan dentro de RadicaCuentas. Los datos con identificadores incompletos se preservan como origen y se muestran para revisión. Los archivos vinculados de Google Drive **no cambian de permisos** ni se suben de manera automática.
 
 ## Precauciones de producción
 

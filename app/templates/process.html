@@ -1,0 +1,18 @@
+{% extends 'base.html' %}{% block title %}Proceso{% endblock %}{% block content %}
+<div class="pagehead"><div><div class="eyebrow">REGLAS DEL APLICATIVO</div><h1>De la recepción al cierre</h1><p>El proceso se gestiona con acciones, cambios de estado y responsables. No es necesario editar hojas ni fórmulas.</p></div></div>
+<div class="metrics">
+<article class="metric"><div class="metric-label">01 · Recepción</div><h2>Registrar cuenta</h2><p>Validación del contratista, contrato, período y valor. Se genera ID de caso único y fecha límite.</p></article>
+<article class="metric"><div class="metric-label">02 · Revisión</div><h2>Supervisor / revisor</h2><p>Registra ajustes, segunda revisión, envío a firma o financiera. Se conserva el historial.</p></article>
+<article class="metric"><div class="metric-label">03 · Seguimiento</div><h2>Tramitar cuenta</h2><p>Asigna responsable y estado. Gestiona devoluciones, frentes técnicos y jurídicos, y cierre.</p></article>
+<article class="metric"><div class="metric-label">04 · Control</div><h2>Radicación e informes</h2><p>Consulta los expedientes y la radicación mensual, con indicadores calculados directamente en SQL.</p></article>
+</div>
+<div class="two-columns"><section class="panel"><h2>Reglas que aplica la plataforma</h2>
+<div class="task"><div><b>Identificador y duplicados</b><small>Se verifica contrato, documento y período frente a los registros nuevos y también frente al histórico migrado.</small></div></div>
+<div class="task"><div><b>Plazos de gestión</b><small>3 días hábiles para casos ordinarios y 8 para especiales; se requiere configurar el calendario de festivos.</small></div></div>
+<div class="task"><div><b>Permisos individuales</b><small>Cada persona solo puede ejecutar los formularios autorizados por el administrador.</small></div></div>
+<div class="task"><div><b>Trazabilidad</b><small>Las acciones quedan registradas en auditoría SQL. El LOG técnico anterior no se importa; sí se conserva el historial de EVENTOS de cada caso.</small></div></div></section>
+<section class="panel"><h2>Acciones permitidas de seguimiento</h2>
+{% for action,change in followup_actions.items() %}<div class="task"><div><b>{{ action }}</b><small>Nuevo estado: {{ change[0].replace('_',' ') }} · Responsable: {{ change[1].replace('_',' ') }}</small></div></div>{% endfor %}
+</section></div>
+<section class="panel"><h2>Información histórica</h2><p>El expediente conserva los registros originales de casos, eventos, subtareas, respuestas de formularios y radicación. Las hojas LOG, TABLERO e INFORME SEGUIDORES se omiten porque no son fuentes operativas necesarias para la nueva aplicación.</p><p>Las inconsistencias de identificación se reportan en Migración histórica; no se corrigen automáticamente sin validación.</p></section>
+{% endblock %}

@@ -22,7 +22,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .config import get_settings
 from .database import db_session, engine, SessionLocal
 from .models import (Base, User, Case, Event, Subtask, RadContract, RadMonth,
-                     ImportBatch, ImportIssue, Personnel, LegacyLog, FormResponse, Audit, Notification, AuthAttempt)
+                     ImportBatch, ImportIssue, Personnel, FormResponse, Audit, Notification, AuthAttempt)
 from .services import (BOGOTA, FOLLOWUP_ACTIONS, REVIEW_ACTIONS, LEGAL_OUTCOMES,
                        REVIEWERS, PROVIDERS, SUBTASK_TYPES, BusinessError, create_case,
                        apply_followup, apply_review, apply_legal, sla_color, audit, utcnow)
@@ -553,13 +553,19 @@ def toggle_user(request:Request,uid:int,csrf:str=Form(...),db:Session=Depends(db
     audit(db,admin.email,'CAMBIAR_USUARIO',target.email,{'active':target.active})
     db.commit();return redirect('/usuarios')
 
+@app.get('/proceso')
+def process_guide(request:Request,db:Session=Depends(db_session)):
+    u=require_user(request,db)
+    return render(request,db,'process.html',followup_actions=FOLLOWUP_ACTIONS,
+                  review_actions=REVIEW_ACTIONS,legal_outcomes=LEGAL_OUTCOMES,
+                  my_permissions=user_permissions(u))
+
 @app.get('/auditoria')
 def audits_page(request:Request,page:int=1,db:Session=Depends(db_session)):
     require_user(request,db,['admin'])
     page=max(1,page)
     recent=db.scalars(select(Audit).order_by(Audit.id.desc()).limit(40).offset((page-1)*40)).all()
-    logs=db.scalars(select(LegacyLog).order_by(LegacyLog.id.desc()).limit(40).offset((page-1)*40)).all()
-    return render(request,db,'audits.html',recent=recent,logs=logs,page=page)
+    return render(request,db,'audits.html',recent=recent,page=page)
 
 @app.get('/perfil')
 def profile(request:Request,db:Session=Depends(db_session)):

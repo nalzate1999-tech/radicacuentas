@@ -1,5 +1,5 @@
 {% extends 'base.html' %}{% block title %}Auditoría{% endblock %}{% block content %}
-<div class="pagehead"><div><div class="eyebrow">TRAZABILIDAD</div><h1>Auditoría</h1><p>Bitácora de operaciones del nuevo sistema y registros históricos sin modificar.</p></div></div>
-<div class="two-columns"><section class="panel"><h2>Acciones recientes</h2>{% for a in recent %}<div class="task"><div><b>{{ a.action }}</b><small>{{ a.actor }} · {{ a.created_at }}</small><small>{{ a.target }}</small></div></div>{% else %}<p class="muted">Sin acciones nuevas.</p>{% endfor %}</section>
-<section class="panel"><h2>LOG histórico</h2>{% for l in logs %}<div class="task"><div><b>{{ l.level }} · {{ l.process }}</b><small>{{ l.created_at }} · {{ l.case_id or 'Sin caso' }}</small><small>{{ (l.detail or '')[:160] }}</small></div></div>{% else %}<p class="muted">Sin registros históricos.</p>{% endfor %}</section></div>
-<div class="pagination">Página {{ page }} <a class="btn" href="?page={{ page+1 }}">Siguiente</a></div>{% endblock %}
+<div class="pagehead"><div><div class="eyebrow">SEGURIDAD Y TRAZABILIDAD</div><h1>Auditoría de RadicaCuentas</h1><p>Acciones realizadas dentro del aplicativo. La hoja LOG técnica del sistema anterior se omite; la historia del expediente se consulta en cada caso.</p></div></div>
+<section class="panel"><div class="panel-heading"><h2>Acciones registradas</h2></div>
+{% for a in recent %}<div class="task"><div><b>{{ a.action.replace('_',' ') }}</b><small>{{ a.actor }} · {{ a.created_at }}</small><small>{{ a.target }}</small></div></div>{% else %}<p class="muted">Todavía no se han realizado acciones en este entorno.</p>{% endfor %}
+<div class="pagination"><span>Página {{ page }}</span><div>{% if page>1 %}<a class="btn" href="?page={{ page-1 }}">Anterior</a>{% endif %}{% if recent|length==40 %}<a class="btn" href="?page={{ page+1 }}">Siguiente</a>{% endif %}</div></div></section>{% endblock %}

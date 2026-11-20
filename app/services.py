@@ -130,6 +130,14 @@ def create_case(db,data,actor):
     key=hashlib.sha256('|'.join([normalize(data['contract_no']),period,normalize(data['document'])]).encode()).hexdigest()
     existing=db.scalars(select(Case).where(Case.dedupe_key==key)).first()
     if existing:raise BusinessError(f'La cuenta ya se registró con el ID {existing.id_caso}.')
+    # Las filas importadas no tienen dedupe_key histórico: comparar identidad real,
+    # sin modificar ni renombrar los expedientes ya migrados.
+    source_contract=normalize(data['contract_no'])
+    source_document=normalize(data['document'])
+    for prior in db.scalars(select(Case).where(Case.period==period)).all():
+        if (normalize(prior.contract_no)==source_contract and
+            normalize(prior.document)==source_document):
+            raise BusinessError(f'Ya existe una cuenta para este contrato, documento y período: {prior.id_caso}.')
     now=utcnow(); local=now.astimezone(BOGOTA)
     case_id=f'CC-{local:%Y%m%d}-{secrets.token_hex(5).upper()}'
     case=Case(id_caso=case_id,source='web',dedupe_key=key,received_at=now,registered_at=now,
@@ -242,9 +250,13 @@ def apply_legal(db,case,revision_type,provider,outcome,observations,actor):
     sub.provider=provider;sub.status='CERRADA';sub.active=False
     sub.result=outcome;sub.observations=observations;sub.closed_at=utcnow()
     if outcome=='Aprobado':
-        state='APROBADA_FIRMA_REVISORA_JURIDICA';owner='Seguimiento';ev=state
+        state=('APROBADA_FIRMA_REVISORA_TECNICA' if kind=='TECNICA'
+               else 'APROBADA_FIRMA_REVISORA_JURIDICA')
+        owner='Seguimiento';ev=state
     else:
-        state='EN_AJUSTES_CONTRATISTA_SUPERVISOR';owner='Supervisor_Contratista';ev='DEVUELTA_FIRMA_REVISORA_JURIDICA'
+        state='EN_AJUSTES_CONTRATISTA_SUPERVISOR';owner='Supervisor_Contratista'
+        ev=('DEVUELTA_FIRMA_REVISORA_TECNICA' if kind=='TECNICA'
+            else 'DEVUELTA_FIRMA_REVISORA_JURIDICA')
     change_status(db,case,state,owner)
     add_event(db,case,ev,actor,observations,'Firma Técnica' if kind=='TECNICA' else 'Firma Jurídica',state,owner,sub.id)
     audit(db,actor,'FIRMA',case.id_caso,{'tipo':revision_type,'resultado':outcome})

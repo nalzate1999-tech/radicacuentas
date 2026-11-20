@@ -33,6 +33,7 @@
 <div class="sidebar-section">ESPACIO DE TRABAJO</div>
 <nav class="nav-group" aria-label="Navegación principal">
 <a href="/panel" class="nav-item {% if request.url.path=='/panel' %}active{% endif %}"><svg class="icon"><use href="#i-grid"/></svg><span>Mi inicio</span></a>
+<a href="/proceso" class="nav-item {% if request.url.path=='/proceso' %}active{% endif %}"><svg class="icon"><use href="#i-route"/></svg><span>Cómo funciona el proceso</span></a>
 {% if can('casos') %}<a href="/casos" class="nav-item {% if request.url.path=='/casos' or request.url.path.startswith('/casos/') %}active{% endif %}"><svg class="icon"><use href="#i-list"/></svg><span>Expedientes</span></a>{% endif %}
 {% if can('registro') %}<a href="/casos/nuevo" class="nav-item {% if request.url.path=='/casos/nuevo' %}active{% endif %}"><svg class="icon"><use href="#i-plus"/></svg><span>Registrar cuenta</span></a>{% endif %}
 {% if can('revision') %}<a href="/casos?accion=revision" class="nav-item"><svg class="icon"><use href="#i-review"/></svg><span>Revisión supervisor</span></a>{% endif %}

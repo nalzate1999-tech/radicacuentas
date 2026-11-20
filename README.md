@@ -13,7 +13,7 @@ Aplicativo web para reemplazar las hojas como motor operativo. Implementado con 
 - Formulario 4: Revisión técnica/jurídica con proveedor y resultado.
 - Bandeja de casos SQL con búsqueda, filtros, paginación, trazabilidad, subtareas, semáforo y exportación CSV.
 - Radicación mensual por contrato/año con marcación manual y sincronización automática para nuevos registros cuyo contrato se identifica sin ambigüedad.
-- Importación histórica íntegra: las 13 pestañas del Excel, filas originales, valores calculados, fórmulas y destinos de hipervínculos; además se crean tablas operativas SQL.
+- Migración funcional: conserva casos, eventos, subtareas, radicación, personal y respuestas históricas; omite LOG, TABLERO e INFORME SEGUIDORES porque el aplicativo genera su propia auditoría y sus indicadores SQL.
 - Panel básico, informe por responsable, bandeja de anomalías, auditoría, catálogo de personal, administración de festivos y cola SMTP de notificaciones optativa.
 - Scripts de integridad y migraciones de esquema con Alembic.
 
@@ -44,7 +44,7 @@ Requisitos: Docker Engine + Docker Compose, almacenamiento persistente, copia de
 2. Copie `.env.example` a `.env` y cambie `POSTGRES_PASSWORD` y `SECRET_KEY` por secretos generados localmente. Ejemplo de secreto: `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
 3. Deje `APP_ENV=development`, `SESSION_HTTPS_ONLY=0` y `ALLOWED_HOSTS=localhost,127.0.0.1` **solo para pruebas locales**.
 4. Ejecute `docker compose up -d --build`. La primera puesta en marcha aplica `alembic upgrade head`.
-5. Cree el administrador: `docker compose exec web python -m app.cli admin --email administrador@dominio.autorizado --name "Administrador"`. El sistema solicita la contraseña sin imprimirla.
+5. Para habilitar la primera cuenta sin consola, configure `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` en el entorno privado; luego abra `/configuracion-inicial` y establezca la contraseña de administrador. La ruta queda inactiva después de crear la cuenta.
 6. Abra `http://127.0.0.1:8000`, inicie sesión y entre a **Migración**. Cargue el **Excel original**, sin modificarlo. El servicio no envía correos hasta habilitar SMTP.
 7. Verifique las cifras de la pantalla de Migración. Para ejecutar un control formal desde el mismo equipo que dispone del archivo: `docker compose cp "Rev cuentas.xlsx" web:/tmp/rev_cuentas.xlsx` y `docker compose exec web python scripts/verificar_migracion.py /tmp/rev_cuentas.xlsx`. Después elimine la copia temporal: `docker compose exec -u root web rm -f /tmp/rev_cuentas.xlsx`.
 8. Para abrir el aplicativo a usuarios fuera del equipo, configure primero **HTTPS real** (Nginx/Caddy/Traefik, certificados válidos), `APP_ENV=production`, `SESSION_HTTPS_ONLY=1`, `ALLOWED_HOSTS=dominio.institucional.gov.co` y `APP_URL=https://dominio.institucional.gov.co`. El Docker Compose suministrado expone el puerto 8000 **solo en 127.0.0.1**, deliberadamente.
@@ -62,7 +62,7 @@ Sitios oficiales: https://render.com y https://render.com/docs/blueprint-spec
 2. En https://dashboard.render.com elija **New → Blueprint** y conecte el repositorio privado. El Blueprint prepara una aplicación web y una base PostgreSQL 17 de pago con la base restringida a red privada.
 3. Configure `ALLOWED_HOSTS` con el dominio real del servicio (por ejemplo `radicacion-cuentas.onrender.com`) y `APP_URL` con la URL HTTPS correspondiente. En el primer despliegue ajuste estas variables cuando Render haya confirmado el dominio. `SECRET_KEY` se genera automáticamente y `SESSION_HTTPS_ONLY=1`.
 4. Espere al estado de despliegue satisfactorio y verifique `https://su-dominio/health` (debe devolver `{"status":"ok"}`). Se crean las tablas con `alembic upgrade head`.
-5. Desde la función **Shell** del servicio web (plan compatible), ejecute `python -m app.cli admin --email administrador@dominio.autorizado --name "Administrador"`. Escriba una contraseña única y segura cuando se solicite.
+5. Configure `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` en las variables privadas. Abra `/configuracion-inicial` y cree el administrador sin usar terminal.
 6. Abra `https://su-dominio/ingresar`; entre como administrador y cargue `Rev cuentas.xlsx` desde **Migración** (pantalla de carga protegida; límite 35 MB). Para cargas superiores conviene ejecutar el importador dentro del contenedor, sin pasar el archivo por una petición web.
 7. Revise **Migración**, **Casos**, **Radicación mensual** y **Auditoría**. Habilite copias y recuperación de PostgreSQL en Render, supervise consumo, rendimiento y errores.
 
@@ -77,14 +77,14 @@ Guía oficial: https://railway.com/guides/fastapi y https://docs.railway.com/dat
 1. Suba el código (no los datos) a repositorio privado y conecte el repositorio desde **Railway → New Project → Deploy from GitHub**. Railway construye con `Dockerfile`.
 2. Agregue una base **PostgreSQL** al proyecto. En el servicio web, agregue la variable de referencia `DATABASE_URL` correspondiente al servicio PostgreSQL (habitualmente `${{Postgres.DATABASE_URL}}` si ese es el nombre real del servicio).
 3. Configure `SECRET_KEY` aleatorio de al menos 32 caracteres, `APP_ENV=production`, `SESSION_HTTPS_ONLY=1`, `ALLOWED_HOSTS` con el hostname de Railway, `APP_URL` y `NOTIFICATIONS_ENABLED=0`.
-4. En Networking seleccione **Generate Domain** y verifique `/health`. Cree un usuario administrativo por la shell de la plataforma (`python -m app.cli admin ...`), y cargue el Excel **solo** en la pantalla privada de migración. Active backups y HTTPS.
+4. En Networking seleccione **Generate Domain** y verifique `/health`. Configure `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` y cree el administrador desde `/configuracion-inicial`; después cargue el Excel **solo** en la pantalla privada de migración. Active backups y HTTPS.
 
 ## Migración controlada y verificación
 
 - El importador guarda el **hash SHA-256 del archivo** para impedir la doble importación del mismo corte.
 - La importación está diseñada para ejecutarse en **una base vacía** y dentro de **una transacción**: si ocurre un fallo, no deja una migración marcada como completa.
-- Cada fila no vacía, incluso la que no se pueda vincular a un expediente, queda en `raw_rows` asociada a su pestaña y número de fila. Se conservan fórmulas, valores cacheados, referencias de hipervínculos, valores con error y fechas.
-- A partir de esa copia se alimentan `cases`, `events`, `subtasks`, `rad_contracts`, `rad_months`, `form_responses`, `legacy_logs` y `personnel`.
+- Cada fila no vacía de las hojas operativas, incluso la que no se pueda vincular a un expediente, queda en `raw_rows` asociada a su pestaña y número de fila. Se conservan fórmulas, valores cacheados, referencias de hipervínculos, valores con error y fechas.
+- A partir de esa copia se alimentan `cases`, `events`, `subtasks`, `rad_contracts`, `rad_months`, `form_responses` y `personnel`.
 - **No se crean archivos ni vínculos públicos de Drive**. Los links anteriores se preservan como texto y metadatos; los documentos reales siguen en Drive con los permisos existentes.
 - No se eliminan registros huérfanos; las inconsistencias se señalan en `import_issues` para conciliación humana.
 - El origen Excel es un corte estático. Para la puesta en marcha real, congele el formulario/archivo origen, exporte una **copia final**, migre esa copia y verifique que no hubo nuevos movimientos durante el cambio.
@@ -133,6 +133,10 @@ La nueva interfaz utiliza superficies tonales, tarjetas de trabajo, tipografía 
 
 **Configuración inicial:** `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` activan `/configuracion-inicial` mientras `users` está vacía. La creación única se protege con CSRF, límite de intentos y bloqueo de transacción sobre PostgreSQL. Después de crear la primera cuenta, esta ruta deja de estar disponible.
 
-**Migración 2026:** desde el menú administrativo, el usuario puede cargar `Rev cuentas.xlsx`. Un ensayo local sobre la fuente proporcionada confirmó **13 pestañas y 43.800 filas crudas**, además de 1.292 casos, 8.555 eventos, 8.371 respuestas históricas, 23.288 logs, 157 subtareas y 112 contratos de radicación. La migración en Railway debe ejecutarla el administrador autorizado. No incluir el archivo fuente en GitHub.
+**Migración 2026:** desde el menú administrativo, el usuario puede cargar `Rev cuentas.xlsx`. Un ensayo local sobre la fuente proporcionada confirmó **10 hojas operativas (9 con registros) y 18.490 filas crudas**, además de 1.292 casos, 8.555 eventos, 8.371 respuestas históricas, 157 subtareas y 112 contratos de radicación. La migración en Railway debe ejecutarla el administrador autorizado. No incluir el archivo fuente en GitHub.
 
 La actualización de esquema es `migrations/versions/0002_permissions_invitations.py` y se aplica automáticamente con `alembic upgrade head` en Docker.
+
+## Ajuste funcional 2026-11-20 (v3)
+
+La migración ignora las salidas derivadas `LOG`, `TABLERO` e `INFORME SEGUIDORES`; mantiene los eventos que explican cada caso, la información de radicación y respuestas originales. Los indicadores se recalculan desde SQL y el sistema registra su propia auditoría. El registro bloquea duplicados contra casos nuevos e históricos mediante contrato/documento/período. Se reconstruyen los tipos de revisión desde las subtareas y respuestas históricas donde existe vinculación inequívoca. El resultado técnico aprobado queda identificado como técnico y no jurídico. Estos ajustes deben homologarse con responsables del proceso antes de producción.
