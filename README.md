@@ -126,3 +126,13 @@ Estas pruebas verifican login, CSRF, roles, registro sin adjuntos, duplicados, l
 - Los roles de esta versión habilitan módulos, pero aún requieren homologación de permisos de **acceso por expediente, área o dependencia**.
 - Configure MFA/SSO, respaldo cifrado, acceso administrativo restringido, WAF/rate limiting perimetral, políticas de contraseña y pruebas de recuperación antes de operación institucional.
 - Para cambios futuros de columnas o tablas utilice migraciones Alembic versionadas; no cambie a mano el esquema en producción.
+
+## Versión 2 — Material Design 3 y administración desde el navegador
+
+La nueva interfaz utiliza superficies tonales, tarjetas de trabajo, tipografía de alta legibilidad, diseño adaptable y navegación por capacidad. No requiere React ni depender de servicios externos de Google Fonts. El administrador puede crear usuarios **sin consola**: nombre, correo y selección independiente de los cuatro formularios, además de módulos auxiliares. Cada cuenta recibe un enlace privado de activación, de uso único y 72 horas de vigencia; el usuario establece su contraseña.
+
+**Configuración inicial:** `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` activan `/configuracion-inicial` mientras `users` está vacía. La creación única se protege con CSRF, límite de intentos y bloqueo de transacción sobre PostgreSQL. Después de crear la primera cuenta, esta ruta deja de estar disponible.
+
+**Migración 2026:** desde el menú administrativo, el usuario puede cargar `Rev cuentas.xlsx`. Un ensayo local sobre la fuente proporcionada confirmó **13 pestañas y 43.800 filas crudas**, además de 1.292 casos, 8.555 eventos, 8.371 respuestas históricas, 23.288 logs, 157 subtareas y 112 contratos de radicación. La migración en Railway debe ejecutarla el administrador autorizado. No incluir el archivo fuente en GitHub.
+
+La actualización de esquema es `migrations/versions/0002_permissions_invitations.py` y se aplica automáticamente con `alembic upgrade head` en Docker.

@@ -18,6 +18,8 @@ def get_settings():
         smtp_tls = os.getenv('SMTP_STARTTLS', '1') == '1'
         app_url = os.getenv('APP_URL', 'http://127.0.0.1:8000').rstrip('/')
         notifications_enabled = os.getenv('NOTIFICATIONS_ENABLED', '0') == '1'
+        bootstrap_token = os.getenv('BOOTSTRAP_TOKEN', '').strip()
+        bootstrap_email = os.getenv('BOOTSTRAP_EMAIL', '').lower().strip()
     s = Settings()
     if s.env == 'production':
         if len(s.secret) < 32 or 'dev-only' in s.secret or 'cambiar' in s.secret.lower():

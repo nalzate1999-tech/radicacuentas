@@ -1,19 +1,62 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>{% block title %}Radicación de cuentas{% endblock %} · Gestión de cuentas</title>
-<link rel="stylesheet" href="{{ url_for('static', path='style.css') }}"/></head>
-<body>{% if user %}<div class="layout"><aside class="sidebar">
-<div class="brand"><span class="brandmark">RC</span><div><strong>RadicaCuentas</strong><small>Gestión institucional</small></div></div>
-<div class="sidebar-section">OPERACIÓN</div>
-<nav aria-label="Navegación principal"><a href="/panel" class="{% if request.url.path == '/panel' %}active{% endif %}">▦ <span>Panel general</span></a>
-<a href="/casos" class="{% if request.url.path.startswith('/casos') %}active{% endif %}">▤ <span>Casos</span></a>
-{% if user.role in ['admin','seguimiento'] %}<a href="/casos/nuevo">＋ <span>Nuevo registro</span></a>{% endif %}
-<a href="/radicacion" class="{% if request.url.path.startswith('/radicacion') %}active{% endif %}">▦ <span>Radicación mensual</span></a>
-<a href="/informes" class="{% if request.url.path.startswith('/informes') %}active{% endif %}">▥ <span>Informes</span></a></nav>
-{% if user.role == 'admin' %}<div class="sidebar-section">ADMINISTRACIÓN</div><nav><a href="/administracion">↧ <span>Migración</span></a><a href="/usuarios">♙ <span>Usuarios</span></a><a href="/auditoria">◎ <span>Auditoría</span></a><a href="/festivos">▦ <span>Festivos / SLA</span></a></nav>{% endif %}
-<div class="side-bottom"><div class="identity"><div class="avatar">{{ user.name[:1]|upper }}</div><div><b>{{ user.name }}</b><small>{{ roles.get(user.role, user.role) }}</small></div></div>
-<a class="account-link" href="/perfil">Cambiar contraseña</a><form action="/salir" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"/><button class="logout" type="submit">Cerrar sesión</button></form></div></aside>
-<div class="body-content"><header class="topbar"><span class="mobile-brand">RadicaCuentas</span><span class="topbar-text">Sistema de radicación y seguimiento · Zona horaria Bogotá</span><span class="user-dot">{{ user.email }}</span></header>
-<main class="main">{% block content %}{% endblock %}</main></div></div>
-{% else %}<main>{% block content_public %}{% endblock %}</main>{% endif %}
+<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="theme-color" content="#f6f7fc"/><meta name="robots" content="noindex,nofollow"/>
+<title>{% block title %}Inicio{% endblock %} | RadicaCuentas</title>
+<link rel="stylesheet" href="{{ url_for('static', path='style.css') }}"/>
+</head><body>
+<svg xmlns="http://www.w3.org/2000/svg" class="svg-sprites" aria-hidden="true">
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.4"/><rect x="14" y="3" width="7" height="7" rx="1.4"/><rect x="3" y="14" width="7" height="7" rx="1.4"/><rect x="14" y="14" width="7" height="7" rx="1.4"/></symbol>
+<symbol id="i-list" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m4 12 5 5L20 6"/></symbol>
+<symbol id="i-review" viewBox="0 0 24 24"><path d="M4 5h16M4 10h12M4 15h8"/><circle cx="17" cy="17" r="4"/><path d="m15.5 17 1 1 2-2"/></symbol>
+<symbol id="i-route" viewBox="0 0 24 24"><path d="M7 4a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM17 14a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/><path d="M8 10v2a5 5 0 0 0 5 5h1M11 7h8M16 4l3 3-3 3"/></symbol>
+<symbol id="i-scale" viewBox="0 0 24 24"><path d="M12 4v16M4 8h16M8 8l-4 7h8l-4-7Zm8 0-4 7h8l-4-7Z"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V4M4 20h16M8 15v-5M13 15V6M18 15v-8"/></symbol>
+<symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM17 11a3 3 0 1 0 0-6M21 21v-2a4 4 0 0 0-3-3.8"/></symbol>
+<symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4M17 3v4M3 10h18"/></symbol>
+<symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 17V4m-5 5 5-5 5 5M4 17v3h16v-3"/></symbol>
+<symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-7M3 4v5h5M12 7v5l3 2"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 15v2"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+<symbol id="i-signout" viewBox="0 0 24 24"><path d="M11 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6M15 8l4 4-4 4m4-4H9"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2 20 6v6c0 5-3.2 8.3-8 10-4.8-1.7-8-5-8-10V6l8-4Z"/><path d="m9 12 2 2 4-5"/></symbol>
+<symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 7 8 6 8-6"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m10 2-.8 2.5-2 1.1-2.7-.5-2 3.4 1.9 2v2l-1.9 2 2 3.4 2.7-.5 2 1.1L10 22h4l.8-2.5 2-1.1 2.7.5 2-3.4-1.9-2v-2l1.9-2-2-3.4-2.7.5-2-1.1L14 2h-4Z"/></symbol>
+</svg>
+{% if user %}
+<div class="app-shell">
+<aside class="sidebar">
+<a href="/panel" class="brand"><span class="brandmark"><svg class="icon"><use href="#i-grid"/></svg></span><span class="brand-copy"><strong>RadicaCuentas</strong><small>Plataforma de gestión</small></span></a>
+<div class="sidebar-section">ESPACIO DE TRABAJO</div>
+<nav class="nav-group" aria-label="Navegación principal">
+<a href="/panel" class="nav-item {% if request.url.path=='/panel' %}active{% endif %}"><svg class="icon"><use href="#i-grid"/></svg><span>Mi inicio</span></a>
+{% if can('casos') %}<a href="/casos" class="nav-item {% if request.url.path=='/casos' or request.url.path.startswith('/casos/') %}active{% endif %}"><svg class="icon"><use href="#i-list"/></svg><span>Expedientes</span></a>{% endif %}
+{% if can('registro') %}<a href="/casos/nuevo" class="nav-item {% if request.url.path=='/casos/nuevo' %}active{% endif %}"><svg class="icon"><use href="#i-plus"/></svg><span>Registrar cuenta</span></a>{% endif %}
+{% if can('revision') %}<a href="/casos?accion=revision" class="nav-item"><svg class="icon"><use href="#i-review"/></svg><span>Revisión supervisor</span></a>{% endif %}
+{% if can('seguimiento') %}<a href="/casos?accion=seguimiento" class="nav-item"><svg class="icon"><use href="#i-route"/></svg><span>Seguimiento</span></a>{% endif %}
+{% if can('juridica') %}<a href="/casos?accion=juridica" class="nav-item"><svg class="icon"><use href="#i-scale"/></svg><span>Jurídica / técnica</span></a>{% endif %}
+{% if can('radicacion') %}<a href="/radicacion" class="nav-item {% if request.url.path.startswith('/radicacion') %}active{% endif %}"><svg class="icon"><use href="#i-calendar"/></svg><span>Radicación mensual</span></a>{% endif %}
+{% if can('informes') %}<a href="/informes" class="nav-item {% if request.url.path.startswith('/informes') %}active{% endif %}"><svg class="icon"><use href="#i-chart"/></svg><span>Indicadores</span></a>{% endif %}
+</nav>
+{% if user.role=='admin' %}
+<div class="sidebar-section admin-section">ADMINISTRACIÓN</div>
+<nav class="nav-group" aria-label="Administración">
+<a href="/usuarios" class="nav-item {% if request.url.path.startswith('/usuarios') %}active{% endif %}"><svg class="icon"><use href="#i-users"/></svg><span>Usuarios y permisos</span></a>
+<a href="/administracion" class="nav-item {% if request.url.path.startswith('/administracion') %}active{% endif %}"><svg class="icon"><use href="#i-upload"/></svg><span>Migración histórica</span></a>
+<a href="/auditoria" class="nav-item {% if request.url.path.startswith('/auditoria') %}active{% endif %}"><svg class="icon"><use href="#i-history"/></svg><span>Auditoría</span></a>
+<a href="/festivos" class="nav-item {% if request.url.path.startswith('/festivos') %}active{% endif %}"><svg class="icon"><use href="#i-calendar"/></svg><span>Festivos y plazos</span></a>
+</nav>
+{% endif %}
+<div class="side-bottom"><div class="identity"><span class="avatar">{{ user.name[:1]|upper }}</span><span><b>{{ user.name }}</b><small>{{ 'Administrador' if user.role=='admin' else 'Usuario autorizado' }}</small></span></div>
+<a class="account-link" href="/perfil"><svg class="icon"><use href="#i-lock"/></svg> Seguridad de mi cuenta</a>
+<form action="/salir" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"/><button class="logout" type="submit"><svg class="icon"><use href="#i-signout"/></svg> Cerrar sesión</button></form></div>
+</aside>
+<div class="body-content"><header class="topbar"><div class="topbar-leading"><span class="topbar-logo">R</span><span class="topbar-text">Sistema de radicación y seguimiento</span></div><div class="topbar-trailing"><span class="environment-tag"><span class="online-dot"></span>Entorno de pruebas</span><span class="user-dot">{{ user.email }}</span><span class="header-avatar">{{ user.name[:1]|upper }}</span></div></header>
+<main class="main">{% block content %}{% endblock %}</main>
+<footer class="main-footer">RadicaCuentas <span>·</span> Gestión documental y trazabilidad <span>·</span> Acceso controlado</footer></div>
+</div>
+{% else %}<main class="public-main">{% block content_public %}{% endblock %}</main>{% endif %}
 </body></html>

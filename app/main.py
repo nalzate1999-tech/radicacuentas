@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request, Depends, Form, HTTPException, UploadFile, 
 from fastapi.responses import RedirectResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select, func, or_, desc
+from sqlalchemy import select, func, or_, desc, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
@@ -38,6 +38,55 @@ app.mount('/static',StaticFiles(directory=str(APP_DIR/'static')),name='static')
 templates=Jinja2Templates(directory=str(APP_DIR/'templates'))
 ph=PasswordHasher(time_cost=3,memory_cost=65536,parallelism=4)
 ROLES={'admin':'Administrador','seguimiento':'Seguimiento','revisor':'Revisor','abogados':'Firmas jurídica/técnica','consulta':'Consulta'}
+FORM_PERMISSIONS={
+    'registro':'Registro de cuentas',
+    'revision':'Revisión de supervisor',
+    'seguimiento':'Gestión y seguimiento',
+    'juridica':'Revisión jurídica y técnica',
+}
+EXTRA_PERMISSIONS={
+    'casos':'Consulta de expedientes',
+    'radicacion':'Radicación mensual',
+    'informes':'Informes e indicadores',
+    'exportar':'Exportación de información',
+}
+PERMISSIONS={**FORM_PERMISSIONS,**EXTRA_PERMISSIONS}
+LEGACY_ROLE_PERMISSIONS={
+    'seguimiento':{'registro','seguimiento','casos','radicacion','informes','exportar'},
+    'revisor':{'revision','casos','radicacion','informes','exportar'},
+    'abogados':{'juridica','casos','radicacion','informes','exportar'},
+    'consulta':{'casos','radicacion','informes','exportar'},
+}
+
+def user_permissions(user):
+    if not user or not user.active:return set()
+    if user.role=='admin':return set(PERMISSIONS)
+    if user.form_permissions is not None:
+        return set(user.form_permissions).intersection(PERMISSIONS)
+    return LEGACY_ROLE_PERMISSIONS.get(user.role,set())
+
+def can(user,permission):
+    perms=user_permissions(user)
+    # Una función sobre expedientes requiere lectura del caso, no acceso a informes ni exportaciones.
+    return permission in perms or (permission=='casos' and bool(perms.intersection(FORM_PERMISSIONS)))
+
+def require_permission(request,db,permission):
+    user=require_user(request,db)
+    if not can(user,permission):raise HTTPException(403,'No tiene asignada esta herramienta.')
+    return user
+
+def invitation_url(token):
+    return settings.app_url+'/activar/'+token
+
+def find_invitation(db,token):
+    if not token or len(token)>200:return None
+    token_hash=hashlib.sha256(token.encode()).hexdigest()
+    u=db.scalar(select(User).where(User.invite_token_hash==token_hash))
+    if not u or u.active or not u.invite_expires_at:return None
+    expiry=u.invite_expires_at
+    if expiry.tzinfo is None:expiry=expiry.replace(tzinfo=timezone.utc)
+    return u if expiry>datetime.now(timezone.utc) else None
+
 
 @app.exception_handler(403)
 async def forbidden(request, exc):
@@ -72,12 +121,76 @@ def check_csrf(request,token):
 def ctx(request,db,**extra):
     u=current_user(request,db)
     if not request.session.get('csrf'):request.session['csrf']=secrets.token_urlsafe(32)
-    return dict(request=request,user=u,csrf=request.session['csrf'],roles=ROLES,**extra)
+    return dict(request=request,user=u,csrf=request.session['csrf'],roles=ROLES,can=lambda perm:can(u,perm),form_permissions=FORM_PERMISSIONS,permission_labels=PERMISSIONS,**extra)
 
 def render(request,db,template,**extra):
     return templates.TemplateResponse(request,template,ctx(request,db,**extra))
 
 def redirect(path):return RedirectResponse(path,status_code=303)
+
+
+@app.get('/configuracion-inicial')
+def initial_setup(request:Request,db:Session=Depends(db_session)):
+    if db.scalar(select(func.count()).select_from(User)) or not settings.bootstrap_token or not settings.bootstrap_email:
+        raise HTTPException(404)
+    return render(request,db,'setup.html',error=None,admin_email=settings.bootstrap_email)
+
+@app.post('/configuracion-inicial')
+def initial_setup_post(request:Request,csrf:str=Form(...),code:str=Form(...),
+                       name:str=Form(...),email:str=Form(...),password:str=Form(...),
+                       confirm_password:str=Form(...),db:Session=Depends(db_session)):
+    check_csrf(request,csrf)
+    if not settings.bootstrap_token or not settings.bootstrap_email:raise HTTPException(404)
+    # Impedir creación simultánea del primer administrador.
+    if db.bind.dialect.name=='postgresql':db.execute(text('SELECT pg_advisory_xact_lock(731020)'))
+    if db.scalar(select(func.count()).select_from(User)):raise HTTPException(404)
+    ip=request.client.host if request.client else 'unknown'
+    key=hashlib.sha256(('bootstrap:'+ip).encode()).hexdigest()
+    cutoff=datetime.now(timezone.utc)-timedelta(minutes=15)
+    failed=db.scalar(select(func.count()).select_from(AuthAttempt).where(
+         AuthAttempt.email_hash==key,AuthAttempt.success==False,AuthAttempt.occurred_at>=cutoff)) or 0
+    if failed>=8:raise HTTPException(429,'Demasiados intentos de configuración.')
+    valid=(secrets.compare_digest(code,settings.bootstrap_token)
+           and email.strip().lower()==settings.bootstrap_email
+           and len(password)>=12 and password==confirm_password and bool(name.strip()))
+    db.add(AuthAttempt(email_hash=key,success=valid))
+    if not valid:
+        db.commit()
+        return templates.TemplateResponse(request,'setup.html',ctx(request,db,
+          error='Código, correo o contraseña incorrectos.',admin_email=settings.bootstrap_email),status_code=400)
+    db.add(User(name=name.strip()[:160],email=settings.bootstrap_email,password_hash=ph.hash(password),
+                role='admin',active=True,form_permissions=list(PERMISSIONS)))
+    audit(db,'configuracion-inicial','CREAR_ADMIN',settings.bootstrap_email)
+    db.commit()
+    return redirect('/ingresar?configurado=1')
+
+@app.get('/activar/{token}')
+def activation_page(request:Request,token:str,db:Session=Depends(db_session)):
+    target=find_invitation(db,token)
+    if not target:raise HTTPException(404,'Invitación no válida o vencida.')
+    response=render(request,db,'activation.html',target=target,token=token,error=None)
+    response.headers['Cache-Control']='no-store'
+    response.headers['Referrer-Policy']='no-referrer'
+    return response
+
+@app.post('/activar/{token}')
+def activate(request:Request,token:str,csrf:str=Form(...),password:str=Form(...),
+             confirm_password:str=Form(...),db:Session=Depends(db_session)):
+    check_csrf(request,csrf)
+    target=find_invitation(db,token)
+    if not target:raise HTTPException(404,'Invitación no válida o vencida.')
+    if len(password)<12 or password!=confirm_password:
+        response=templates.TemplateResponse(request,'activation.html',ctx(request,db,
+          target=target,token=token,error='Las contraseñas deben coincidir y tener al menos 12 caracteres.'),status_code=400)
+        response.headers['Cache-Control']='no-store'
+        return response
+    target.password_hash=ph.hash(password)
+    target.active=True
+    target.invite_token_hash=None
+    target.invite_expires_at=None
+    audit(db,target.email,'ACTIVAR_USUARIO',target.email)
+    db.commit()
+    return redirect('/ingresar?activado=1')
 
 @app.get('/')
 def index(request:Request):
@@ -86,7 +199,7 @@ def index(request:Request):
 @app.get('/ingresar')
 def login_page(request:Request,db:Session=Depends(db_session)):
     if current_user(request,db):return redirect('/panel')
-    return render(request,db,'login.html',error=None)
+    return render(request,db,'login.html',error=None,setup_available=bool(settings.bootstrap_token and settings.bootstrap_email and not db.scalar(select(func.count()).select_from(User))))
 
 @app.post('/ingresar')
 def login(request:Request,email:str=Form(...),password:str=Form(...),csrf:str=Form(...),db:Session=Depends(db_session)):
@@ -99,7 +212,7 @@ def login(request:Request,email:str=Form(...),password:str=Form(...),csrf:str=Fo
             AuthAttempt.occurred_at>=window)) or 0
     if recent_bad>=8:
         return templates.TemplateResponse(request,'login.html',ctx(request,db,
-                error='Demasiados intentos. Vuelva a intentar después de 15 minutos.'),status_code=429)
+                error='Demasiados intentos. Vuelva a intentar después de 15 minutos.',setup_available=False),status_code=429)
     user=db.scalar(select(User).where(User.email==email))
     valid=False
     if user and user.active:
@@ -107,7 +220,7 @@ def login(request:Request,email:str=Form(...),password:str=Form(...),csrf:str=Fo
         except (argon_exc.VerifyMismatchError,argon_exc.InvalidHashError,argon_exc.VerificationError):pass
     db.add(AuthAttempt(email_hash=token_hash,success=valid));db.commit()
     if not valid:
-        return templates.TemplateResponse(request,'login.html',ctx(request,db,error='Credenciales incorrectas.'),status_code=401)
+        return templates.TemplateResponse(request,'login.html',ctx(request,db,error='Credenciales incorrectas.',setup_available=False),status_code=401)
     request.session.clear()
     request.session['uid']=user.id
     request.session['csrf']=secrets.token_urlsafe(32)
@@ -122,6 +235,8 @@ def logout(request:Request,csrf:str=Form(...)):
 @app.get('/panel')
 def dashboard(request:Request,db:Session=Depends(db_session)):
     u=require_user(request,db)
+    if not user_permissions(u):
+        return render(request,db,'dashboard.html',total=0,closed=0,overdue=0,movements=0,by_status=[],recent=[],sla_color=sla_color)
     total=db.scalar(select(func.count()).select_from(Case)) or 0
     closed=db.scalar(select(func.count()).select_from(Case).where(Case.current_status.in_(['CERRADA','PAGADA']))) or 0
     now=datetime.now(BOGOTA).date()
@@ -133,8 +248,10 @@ def dashboard(request:Request,db:Session=Depends(db_session)):
                   movements=events,by_status=by_status,recent=recent,sla_color=sla_color)
 
 @app.get('/casos')
-def cases(request:Request,q:str='',estado:str='',periodo:str='',page:int=1,db:Session=Depends(db_session)):
-    require_user(request,db)
+def cases(request:Request,q:str='',estado:str='',periodo:str='',accion:str='',page:int=1,db:Session=Depends(db_session)):
+    require_permission(request,db,'casos')
+    if accion and accion not in ('revision','seguimiento','juridica'):raise HTTPException(400,'Formulario no reconocido.')
+    if accion:require_permission(request,db,accion)
     query=select(Case)
     if q.strip():
         term=f'%{q.strip()[:100]}%'
@@ -148,11 +265,11 @@ def cases(request:Request,q:str='',estado:str='',periodo:str='',page:int=1,db:Se
                     .limit(page_size).offset((page-1)*page_size)).all()
     statuses=db.scalars(select(Case.current_status).distinct().order_by(Case.current_status)).all()
     return render(request,db,'cases.html',rows=rows,total=total,page=page,pages=max(1,math.ceil(total/page_size)),
-                  q=q,estado=estado,periodo=periodo,statuses=statuses,sla_color=sla_color)
+                  q=q,estado=estado,periodo=periodo,accion=accion,statuses=statuses,sla_color=sla_color)
 
 @app.get('/casos/nuevo')
 def register_form(request:Request,db:Session=Depends(db_session)):
-    require_user(request,db,['seguimiento'])
+    require_permission(request,db,'registro')
     personnel=db.scalars(select(Personnel).order_by(Personnel.name)).all()
     names=sorted(set([p.name for p in personnel]+['Brayan']))
     return render(request,db,'register.html',assignees=names,reviewers=REVIEWERS,error=None,form={})
@@ -165,7 +282,7 @@ def register(request:Request,csrf:str=Form(...),contractor_type:str=Form(...),
              reviewer:list[str]=Form([]),special:str=Form('No'),sent_by:str=Form(...),
              requires_reviewer:str=Form('No'),requires_technical:str=Form('No'),
              requires_legal:str=Form('No'),db:Session=Depends(db_session)):
-    u=require_user(request,db,['seguimiento']);check_csrf(request,csrf)
+    u=require_permission(request,db,'registro');check_csrf(request,csrf)
     data=locals().copy()
     data['reviewer']=', '.join(reviewer)
     try:
@@ -182,7 +299,7 @@ def register(request:Request,csrf:str=Form(...),contractor_type:str=Form(...),
 
 @app.get('/casos/{case_id}')
 def case_detail(request:Request,case_id:str,event_page:int=1,db:Session=Depends(db_session)):
-    require_user(request,db)
+    require_permission(request,db,'casos')
     case=db.get(Case,case_id)
     if not case:raise HTTPException(404,'Caso no encontrado')
     event_page=max(1,event_page)
@@ -199,14 +316,14 @@ def case_detail(request:Request,case_id:str,event_page:int=1,db:Session=Depends(
 
 @app.get('/casos/{case_id}/revisor')
 def reviewer_form(request:Request,case_id:str,db:Session=Depends(db_session)):
-    require_user(request,db,['revisor']);case=db.get(Case,case_id)
+    require_permission(request,db,'revision');case=db.get(Case,case_id)
     if not case:raise HTTPException(404)
     return render(request,db,'workflow.html',case=case,mode='revisor',options=list(REVIEW_ACTIONS),error=None)
 
 @app.post('/casos/{case_id}/revisor')
 def reviewer_post(request:Request,case_id:str,csrf:str=Form(...),resultado:str=Form(...),
                   observaciones:str=Form(...),db:Session=Depends(db_session)):
-    u=require_user(request,db,['revisor']);check_csrf(request,csrf)
+    u=require_permission(request,db,'revision');check_csrf(request,csrf)
     case=db.get(Case,case_id)
     if not case:raise HTTPException(404)
     try:apply_review(db,case,resultado,observaciones,u.email);db.commit()
@@ -217,7 +334,7 @@ def reviewer_post(request:Request,case_id:str,csrf:str=Form(...),resultado:str=F
 
 @app.get('/casos/{case_id}/seguimiento')
 def follow_form(request:Request,case_id:str,db:Session=Depends(db_session)):
-    require_user(request,db,['seguimiento']);case=db.get(Case,case_id)
+    require_permission(request,db,'seguimiento');case=db.get(Case,case_id)
     if not case:raise HTTPException(404)
     return render(request,db,'workflow.html',case=case,mode='seguimiento',options=list(FOLLOWUP_ACTIONS),error=None)
 
@@ -225,7 +342,7 @@ def follow_form(request:Request,case_id:str,db:Session=Depends(db_session)):
 def follow_post(request:Request,case_id:str,csrf:str=Form(...),accion:str=Form(...),
                 observaciones:str=Form(...),frente_multiple:str=Form('No'),frentes:list[str]=Form([]),
                 fecha_cierre:str=Form(''),db:Session=Depends(db_session)):
-    u=require_user(request,db,['seguimiento']);check_csrf(request,csrf)
+    u=require_permission(request,db,'seguimiento');check_csrf(request,csrf)
     case=db.get(Case,case_id)
     if not case:raise HTTPException(404)
     try:
@@ -238,7 +355,7 @@ def follow_post(request:Request,case_id:str,csrf:str=Form(...),accion:str=Form(.
 
 @app.get('/casos/{case_id}/abogados')
 def legal_form(request:Request,case_id:str,db:Session=Depends(db_session)):
-    require_user(request,db,['abogados']);case=db.get(Case,case_id)
+    require_permission(request,db,'juridica');case=db.get(Case,case_id)
     if not case:raise HTTPException(404)
     return render(request,db,'workflow.html',case=case,mode='abogados',options=LEGAL_OUTCOMES,error=None)
 
@@ -246,7 +363,7 @@ def legal_form(request:Request,case_id:str,db:Session=Depends(db_session)):
 def legal_post(request:Request,case_id:str,csrf:str=Form(...),tipo_revision:str=Form(...),
                proveedor:str=Form(...),resultado:str=Form(...),observaciones:str=Form(...),
                db:Session=Depends(db_session)):
-    u=require_user(request,db,['abogados']);check_csrf(request,csrf)
+    u=require_permission(request,db,'juridica');check_csrf(request,csrf)
     case=db.get(Case,case_id)
     if not case:raise HTTPException(404)
     try:apply_legal(db,case,tipo_revision,proveedor,resultado,observaciones,u.email);db.commit()
@@ -257,7 +374,7 @@ def legal_post(request:Request,case_id:str,csrf:str=Form(...),tipo_revision:str=
 
 @app.get('/radicacion')
 def rad_contracts(request:Request,q:str='',page:int=1,year:int=2026,db:Session=Depends(db_session)):
-    require_user(request,db)
+    require_permission(request,db,'radicacion')
     query=select(RadContract)
     if q.strip():
         term=f'%{q.strip()[:100]}%'
@@ -275,7 +392,7 @@ def rad_contracts(request:Request,q:str='',page:int=1,year:int=2026,db:Session=D
 @app.post('/radicacion/{contract_id}/{month}')
 def rad_update(request:Request,contract_id:int,month:int,csrf:str=Form(...),
                year:int=Form(...),filed:str=Form(...),db:Session=Depends(db_session)):
-    user=require_user(request,db,['seguimiento']);check_csrf(request,csrf)
+    user=require_permission(request,db,'radicacion');check_csrf(request,csrf)
     if year<2020 or year>2100 or month<1 or month>12 or not db.get(RadContract,contract_id):
         raise HTTPException(400)
     m=db.scalar(select(RadMonth).where(RadMonth.contract_id==contract_id,RadMonth.month==month,RadMonth.year==year))
@@ -288,7 +405,7 @@ def rad_update(request:Request,contract_id:int,month:int,csrf:str=Form(...),
 
 @app.get('/informes')
 def reports(request:Request,db:Session=Depends(db_session)):
-    require_user(request,db)
+    require_permission(request,db,'informes')
     by_owner=db.execute(select(Case.current_owner,func.count(Case.id_caso))
                         .group_by(Case.current_owner).order_by(desc(func.count(Case.id_caso)))).all()
     by_assignee=db.execute(select(Case.followup_assignee,func.count(Case.id_caso))
@@ -299,7 +416,7 @@ def reports(request:Request,db:Session=Depends(db_session)):
 
 @app.get('/informes/casos.csv')
 def export_csv(request:Request,db:Session=Depends(db_session)):
-    require_user(request,db)
+    require_permission(request,db,'exportar')
     def safe_cell(value):
         # Evitar interpretación de fórmulas al abrir el CSV con Excel.
         text='' if value is None else str(value)
@@ -360,32 +477,80 @@ def admin_import(request:Request,csrf:str=Form(...),archivo:UploadFile=File(...)
 @app.get('/usuarios')
 def users_page(request:Request,db:Session=Depends(db_session)):
     require_user(request,db,['admin'])
-    users=db.scalars(select(User).order_by(User.name)).all()
-    return render(request,db,'users.html',users=users,error=None)
+    return render(request,db,'users.html',users=db.scalars(select(User).order_by(User.name)).all(),
+                  error=None,invitation=None)
+
+
+def render_users(request,db,error=None,invitation=None,status_code=200):
+    response=templates.TemplateResponse(request,'users.html',ctx(request,db,
+             users=db.scalars(select(User).order_by(User.name)).all(),
+             error=error,invitation=invitation),status_code=status_code)
+    response.headers['Cache-Control']='no-store'
+    return response
 
 @app.post('/usuarios')
 def create_user(request:Request,csrf:str=Form(...),name:str=Form(...),email:str=Form(...),
-                password:str=Form(...),role:str=Form(...),db:Session=Depends(db_session)):
+                permissions:list[str]=Form([]),db:Session=Depends(db_session)):
     admin=require_user(request,db,['admin']);check_csrf(request,csrf)
-    if role not in ROLES or len(password)<12 or '@' not in email:
-        error='Rol inválido, correo inválido o contraseña menor de 12 caracteres.'
-    elif db.scalar(select(User.id).where(User.email==email.lower().strip())):
-        error='Ya existe un usuario con ese correo.'
-    else:
-        db.add(User(name=name.strip(),email=email.strip().lower(),password_hash=ph.hash(password),role=role))
-        audit(db,admin.email,'CREAR_USUARIO',email.lower(),{'role':role})
-        db.commit();return redirect('/usuarios')
-    return templates.TemplateResponse(request,'users.html',ctx(request,db,
-        users=db.scalars(select(User).order_by(User.name)).all(),error=error),status_code=400)
+    email=email.strip().lower();name=name.strip()
+    perms=sorted(set(permissions).intersection(PERMISSIONS))
+    if not name or len(name)>160 or not email or '@' not in email or len(email)>250:
+        return render_users(request,db,error='Digite un nombre y un correo electrónico válidos.',status_code=400)
+    if not perms:
+        return render_users(request,db,error='Asigne al menos un formulario o herramienta.',status_code=400)
+    if db.scalar(select(User.id).where(User.email==email)):
+        return render_users(request,db,error='Este correo ya tiene una cuenta. Edite sus permisos en el listado.',status_code=400)
+    code=secrets.token_urlsafe(36)
+    u=User(name=name,email=email,password_hash=ph.hash(secrets.token_urlsafe(40)),
+           role='consulta',active=False,form_permissions=perms,
+           invite_token_hash=hashlib.sha256(code.encode()).hexdigest(),
+           invite_expires_at=datetime.now(timezone.utc)+timedelta(hours=72))
+    db.add(u)
+    audit(db,admin.email,'INVITAR_USUARIO',email,{'permissions':perms})
+    db.commit()
+    return render_users(request,db,invitation={'email':email,'url':invitation_url(code)})
+
+@app.post('/usuarios/{uid}/permisos')
+def update_permissions(request:Request,uid:int,csrf:str=Form(...),permissions:list[str]=Form([]),
+                       db:Session=Depends(db_session)):
+    admin=require_user(request,db,['admin']);check_csrf(request,csrf)
+    target=db.get(User,uid)
+    if not target:raise HTTPException(404)
+    if target.role=='admin':raise HTTPException(400,'No es posible modificar permisos del administrador.')
+    perms=sorted(set(permissions).intersection(PERMISSIONS))
+    if not perms:return render_users(request,db,error='Debe conservar al menos una herramienta.',status_code=400)
+    old=list(user_permissions(target))
+    target.form_permissions=perms
+    audit(db,admin.email,'CAMBIO_PERMISOS',target.email,{'antes':old,'despues':perms})
+    db.commit()
+    return redirect('/usuarios')
+
+@app.post('/usuarios/{uid}/invitacion')
+def reinvite(request:Request,uid:int,csrf:str=Form(...),db:Session=Depends(db_session)):
+    admin=require_user(request,db,['admin']);check_csrf(request,csrf)
+    target=db.get(User,uid)
+    if not target:raise HTTPException(404)
+    if target.role=='admin':raise HTTPException(400,'No se pueden emitir invitaciones para administradores.')
+    code=secrets.token_urlsafe(36)
+    target.password_hash=ph.hash(secrets.token_urlsafe(40))
+    target.active=False
+    target.invite_token_hash=hashlib.sha256(code.encode()).hexdigest()
+    target.invite_expires_at=datetime.now(timezone.utc)+timedelta(hours=72)
+    audit(db,admin.email,'REINVITAR_USUARIO',target.email)
+    db.commit()
+    return render_users(request,db,invitation={'email':target.email,'url':invitation_url(code)})
 
 @app.post('/usuarios/{uid}/estado')
 def toggle_user(request:Request,uid:int,csrf:str=Form(...),db:Session=Depends(db_session)):
     admin=require_user(request,db,['admin']);check_csrf(request,csrf)
-    user=db.get(User,uid)
-    if not user:raise HTTPException(404)
-    if user.id==admin.id:raise HTTPException(400,'No puede desactivarse a sí mismo.')
-    user.active=not user.active
-    audit(db,admin.email,'CAMBIAR_USUARIO',user.email,{'active':user.active})
+    target=db.get(User,uid)
+    if not target:raise HTTPException(404)
+    if target.id==admin.id or target.role=='admin':raise HTTPException(400,'No puede desactivar a un administrador.')
+    # Un usuario invitado no se activa sin establecer su propia contraseña.
+    if target.invite_token_hash and not target.active:
+        return render_users(request,db,error='El usuario debe aceptar primero su invitación.',status_code=400)
+    target.active=not target.active
+    audit(db,admin.email,'CAMBIAR_USUARIO',target.email,{'active':target.active})
     db.commit();return redirect('/usuarios')
 
 @app.get('/auditoria')
@@ -416,19 +581,6 @@ def change_password(request:Request,csrf:str=Form(...),old_password:str=Form(...
     audit(db,user.email,'CAMBIO_PASSWORD',str(user.id))
     db.commit()
     return render(request,db,'profile.html',message='Contraseña actualizada.',error=None)
-
-@app.post('/usuarios/{uid}/rol')
-def change_role(request:Request,uid:int,csrf:str=Form(...),role:str=Form(...),db:Session=Depends(db_session)):
-    admin=require_user(request,db,['admin']);check_csrf(request,csrf)
-    target=db.get(User,uid)
-    if not target:raise HTTPException(404)
-    if target.id==admin.id or role not in ROLES:
-        raise HTTPException(400,'No puede cambiar su propio rol o usar un rol desconocido.')
-    old=target.role
-    target.role=role
-    audit(db,admin.email,'CAMBIO_ROL',target.email,{'antes':old,'despues':role})
-    db.commit()
-    return redirect('/usuarios')
 
 @app.get('/festivos')
 def holidays_page(request:Request,db:Session=Depends(db_session)):

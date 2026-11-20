@@ -87,3 +87,52 @@ def test_roles():
     assert c.get('/usuarios').status_code==403
     assert c.get('/casos/nuevo').status_code==403
     assert c.get('/administracion').status_code==403
+
+
+def test_invitation_activation_and_form_permissions():
+    admin=client_as('qa@example.org')
+    users_page=admin.get('/usuarios')
+    assert users_page.status_code==200
+    assert 'Crear acceso' in users_page.text
+    uid_email='permisos'+uuid.uuid4().hex[:9]+'@example.org'
+    made=admin.post('/usuarios',data={'csrf':token(users_page.text),
+            'name':'Usuario de revisión','email':uid_email,'permissions':['revision','casos']})
+    assert made.status_code==200,made.text[:300]
+    assert 'INVITACIÓN GENERADA' in made.text or 'INVITACIÓN GENERADA'.lower() in made.text.lower()
+    invite=re.search(r'https?://[^"\s<>]+/activar/([A-Za-z0-9_-]+)',made.text)
+    assert invite, 'No existe un enlace de activación'
+    code=invite.group(1)
+    with SessionLocal() as db:
+        target=db.scalar(select(User).where(User.email==uid_email))
+        assert target is not None
+        uid=target.id
+        assert target.active is False
+        assert target.form_permissions==['casos','revision']
+    user_client=TestClient(app,base_url='http://testserver',follow_redirects=False)
+    page=user_client.get('/activar/'+code)
+    assert page.status_code==200,page.text[:300]
+    bad=user_client.post('/activar/'+code,data={'csrf':token(page.text),'password':'123','confirm_password':'123'})
+    assert bad.status_code==400
+    ok=user_client.post('/activar/'+code,data={'csrf':token(page.text),
+                          'password':'ClaveSegura-Usuario-2026!',
+                          'confirm_password':'ClaveSegura-Usuario-2026!'})
+    assert ok.status_code==303
+    assert user_client.get('/activar/'+code).status_code==404
+    login=user_client.get('/ingresar')
+    response=user_client.post('/ingresar',data={'csrf':token(login.text),
+           'email':uid_email,'password':'ClaveSegura-Usuario-2026!'})
+    assert response.status_code==303
+    assert user_client.get('/casos?accion=revision').status_code==200
+    assert user_client.get('/casos/nuevo').status_code==403
+    assert user_client.get('/informes').status_code==403
+    assert user_client.get('/informes/casos.csv').status_code==403
+    assert user_client.get('/usuarios').status_code==403
+    # Las URL directas tampoco pueden dar acceso a formularios no asignados.
+    assert user_client.get('/casos/PRUEBA-123/seguimiento').status_code==403
+    edit=admin.post(f'/usuarios/{uid}/permisos',data={'csrf':token(users_page.text),
+                   'permissions':['registro','informes']})
+    assert edit.status_code==303
+    assert user_client.get('/casos/nuevo').status_code==200
+    assert user_client.get('/casos?accion=revision').status_code==403
+    assert user_client.get('/informes').status_code==200
+    assert user_client.get('/informes/casos.csv').status_code==403

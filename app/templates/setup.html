@@ -1,0 +1,12 @@
+{% extends 'base.html' %}{% block title %}Configuración inicial{% endblock %}
+{% block content_public %}
+<div class="setup-shell"><div class="setup-card"><a href="/ingresar" class="setup-brand"><span class="brandmark">R</span><b>RadicaCuentas</b></a><div class="eyebrow">CONFIGURACIÓN POR ÚNICA VEZ</div><h1>Activa la administración</h1><p class="muted">Esta pantalla solo está disponible mientras no exista un administrador. El código de instalación se valida en el servidor.</p>
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+<form method="post" action="/configuracion-inicial"><input type="hidden" name="csrf" value="{{ csrf }}"/>
+<div class="field"><label>Nombre del administrador</label><input name="name" required maxlength="160" autocomplete="name" placeholder="Nombre y apellido"/></div>
+<div class="field"><label>Correo autorizado</label><input name="email" value="{{ admin_email }}" type="email" required readonly/></div>
+<div class="field"><label>Código único de configuración</label><input name="code" type="password" required autocomplete="off" placeholder="Código recibido por el administrador"/></div>
+<div class="field"><label>Crear contraseña</label><input name="password" type="password" minlength="12" required autocomplete="new-password"/></div>
+<div class="field"><label>Confirmar contraseña</label><input name="confirm_password" type="password" minlength="12" required autocomplete="new-password"/></div>
+<button class="btn primary full" type="submit">Crear cuenta administradora <svg class="icon"><use href="#i-arrow"/></svg></button>
+</form></div></div>{% endblock %}
