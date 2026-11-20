@@ -140,3 +140,13 @@ La actualización de esquema es `migrations/versions/0002_permissions_invitation
 ## Ajuste funcional 2026-11-20 (v3)
 
 La migración ignora las salidas derivadas `LOG`, `TABLERO` e `INFORME SEGUIDORES`; mantiene los eventos que explican cada caso, la información de radicación y respuestas originales. Los indicadores se recalculan desde SQL y el sistema registra su propia auditoría. El registro bloquea duplicados contra casos nuevos e históricos mediante contrato/documento/período. Se reconstruyen los tipos de revisión desde las subtareas y respuestas históricas donde existe vinculación inequívoca. El resultado técnico aprobado queda identificado como técnico y no jurídico. Estos ajustes deben homologarse con responsables del proceso antes de producción.
+
+## Actualización: buscador global y experiencia móvil (20/11/2026)
+
+- `/casos` permite buscar de forma combinada por nombre del contratista, documento, número de contrato, correo/contacto, supervisor, revisor, responsable actual, encargado de seguimiento y persona/proveedor de las subtareas. Los términos pueden aparecer en campos diferentes; se procesan mediante SQL con parámetros, sin leer el Excel.
+- Los expedientes finalizados (`CERRADA`, `CERRADO`, `PAGADA`, `PAGADO`) siguen disponibles en el historial y el indicador de cerrados, pero no en las bandejas de revisión, seguimiento o jurídica. Las rutas de gestión tampoco permiten nuevas modificaciones a esos expedientes.
+- La vista de escritorio usa una tabla; los celulares muestran tarjetas adaptativas y un menú desplegable con las herramientas autorizadas. Se probó visualmente en 320, 390 y 1365 píxeles.
+- `0003_schema_holidays` amplía `cases.period` y los identificadores originales de eventos/subtareas/respuestas para que quepa el histórico. Precarga 94 fechas festivas nacionales de Colombia para 2026–2030 (Ley 51 de 1983 y Ley 2578 de 2026); no incluye festivos locales ni cierres administrativos.
+- Importación de prueba con el histórico `Rev cuentas(1).xlsx`: 1.305 casos, 8.644 eventos, 168 subtareas, 8.466 respuestas y 112 contratos. Las 1.384 incidencias se conservan para conciliación. La carga a Railway requiere autorización y se ejecuta en el módulo de administración, no en GitHub.
+
+La aplicación aún requiere pruebas de aceptación de usuarios, revisión institucional de permisos por expediente y aprobación del tratamiento de datos antes de su utilización oficial.

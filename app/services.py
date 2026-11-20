@@ -10,7 +10,7 @@ from sqlalchemy import select
 from .models import Case, Event, Subtask, Audit, Holiday, Notification, utcnow, RadContract, RadMonth, Personnel
 
 BOGOTA = ZoneInfo('America/Bogota')
-STOP_STATUSES = {'ENVIADA_A_FINANCIERA', 'EN_MESA_DIRECTIVA', 'PAGADA', 'CERRADA'}
+STOP_STATUSES = {'ENVIADA_A_FINANCIERA', 'EN_MESA_DIRECTIVA', 'PAGADA', 'PAGADO', 'CERRADA', 'CERRADO'}
 FOLLOWUP_ACTIONS = {
     'Enviado a revisor': ('EN_PRIMERA_REVISION', 'Revisor', 'ENVIADO_A_REVISOR'),
     'Enviado a Supervisor / Contratista': ('EN_AJUSTES_CONTRATISTA_SUPERVISOR','Supervisor_Contratista','ENVIADO_A_SUPERVISOR_CONTRATISTA'),
@@ -189,6 +189,8 @@ def create_case(db,data,actor):
     return case
 
 def apply_review(db,case,outcome,observations,actor):
+    if case.current_status in ('CERRADA', 'CERRADO', 'PAGADA', 'PAGADO'):
+        raise BusinessError('El expediente está cerrado o pagado y no admite nuevas revisiones.')
     if outcome not in REVIEW_ACTIONS:raise BusinessError('Resultado de revisión no válido.')
     if not observations.strip():raise BusinessError('Las observaciones son obligatorias.')
     st,owner,ev=REVIEW_ACTIONS[outcome]
@@ -197,6 +199,8 @@ def apply_review(db,case,outcome,observations,actor):
     audit(db,actor,'REVISION',case.id_caso,{'resultado':outcome})
 
 def apply_followup(db,case,action,observations,actor,multi=False,fronts=None,closed_date=None):
+    if case.current_status in ('CERRADA', 'CERRADO', 'PAGADA', 'PAGADO'):
+        raise BusinessError('El expediente está cerrado o pagado y no admite nuevas revisiones.')
     if action not in FOLLOWUP_ACTIONS:raise BusinessError('Acción no válida.')
     if not observations.strip():raise BusinessError('Las observaciones son obligatorias.')
     if action=='Cerrar' and not closed_date:
@@ -233,6 +237,8 @@ def apply_followup(db,case,action,observations,actor,multi=False,fronts=None,clo
     audit(db,actor,'SEGUIMIENTO',case.id_caso,{'accion':action,'frentes':selected})
 
 def apply_legal(db,case,revision_type,provider,outcome,observations,actor):
+    if case.current_status in ('CERRADA', 'CERRADO', 'PAGADA', 'PAGADO'):
+        raise BusinessError('El expediente está cerrado o pagado y no admite nuevas revisiones.')
     if revision_type not in PROVIDERS or provider!=PROVIDERS[revision_type]:
         raise BusinessError('Tipo de revisión o proveedor no válido.')
     if outcome not in LEGAL_OUTCOMES or not observations.strip():

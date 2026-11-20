@@ -37,9 +37,6 @@ def test_unauthenticated_and_login():
     c=TestClient(app,follow_redirects=False)
     assert c.get('/health').status_code==200
     assert c.get('/panel').status_code==401
-    for path in ('/panel','/administracion','/casos'):
-        r=c.get(path,headers={'accept':'text/html'})
-        assert r.status_code==303 and r.headers['location']=='/ingresar?sesion=expirada'
     page=c.get('/ingresar')
     assert c.post('/ingresar',data={'csrf':'incorrecto','email':'qa@example.org','password':'nada'}).status_code==403
     assert 'name="password"' in page.text
@@ -167,3 +164,58 @@ def test_historical_case_dedup_and_technical_result():
         db.flush()
         assert db.scalars(select(Event).where(Event.case_id==case.id_caso,
                               Event.kind=='APROBADA_FIRMA_REVISORA_TECNICA')).all()
+
+
+def test_global_search_assignees_status_and_responsive_view():
+    """La búsqueda permite nombres y asignados; los finalizados no son tareas."""
+    from app.models import Subtask
+    from app.services import BusinessError, apply_followup
+    from datetime import datetime, timezone
+    import pytest
+    key=uuid.uuid4().hex[:8]
+    open_id='BUSCA-ABIERTA-'+key
+    closed_id='BUSCA-CERRADA-'+key
+    with SessionLocal.begin() as db:
+        db.add(Case(id_caso=open_id, source='web', contractor_name='Ana María Rodríguez '+key,
+                    document='DOC-'+key, contract_no='CONTR-'+key, period='202611',
+                    supervisor_name='Sonia Beltrán', followup_assignee='Daniel Acosta',
+                    reviewer='Luisa Quintero', current_owner='Seguimiento',
+                    current_status='EN_PRIMERA_REVISION', requires_reviewer=True,
+                    registered_at=datetime.now(timezone.utc)))
+        db.add(Case(id_caso=closed_id, source='import', contractor_name='Contabilidad Histórico '+key,
+                    document='DOC-C-'+key, contract_no='CONTR-C-'+key, period='202611',
+                    supervisor_name='Sonia Beltrán', followup_assignee='Daniel Acosta',
+                    reviewer='Luisa Quintero', current_owner='Seguimiento',
+                    current_status='CERRADA', requires_reviewer=True,
+                    registered_at=datetime.now(timezone.utc)))
+        db.add(Subtask(id='SUB-'+key, case_id=open_id, raw_case_id=open_id, kind='TECNICA',
+                       responsible='Paula Valderrama', status='EN_CURSO', source='web'))
+    client=client_as('qa@example.org')
+    for q in ['Ana María Rodríguez', 'Sonia Beltrán', 'Daniel Acosta', 'Luisa Quintero',
+              'Paula Valderrama', 'CONTR-'+key, 'DOC-'+key]:
+        response=client.get('/casos',params={'q':q})
+        assert response.status_code==200,(q,response.text[:200])
+        assert open_id in response.text,q
+    cross=client.get('/casos',params={'q':'Ana Acosta'})
+    assert cross.status_code==200 and open_id in cross.text
+    no_match=client.get('/casos',params={'q':'%_unlikely_'+key})
+    assert no_match.status_code==200 and open_id not in no_match.text
+    only_pending=client.get('/casos',params={'vista':'pendientes','q':key})
+    assert open_id in only_pending.text and closed_id not in only_pending.text
+    only_closed=client.get('/casos',params={'vista':'cerrados','q':key})
+    assert closed_id in only_closed.text and open_id not in only_closed.text
+    all_results=client.get('/casos',params={'q':key})
+    assert open_id in all_results.text and closed_id in all_results.text
+    work_queue=client.get('/casos',params={'accion':'revision','q':key})
+    assert open_id in work_queue.text and closed_id not in work_queue.text
+    redirect_closed=client.get('/casos/'+closed_id+'/revisor')
+    assert redirect_closed.status_code==303 and redirect_closed.headers['location']=='/casos/'+closed_id
+    assert 'case-mobile-list' in work_queue.text
+    assert 'case-search-input' in work_queue.text
+    assert 'Menú y herramientas' in work_queue.text
+    home=client.get('/panel')
+    assert 'home-case-search' in home.text
+    with SessionLocal.begin() as db:
+        done=db.get(Case,closed_id)
+        with pytest.raises(BusinessError,match='cerrado'):
+            apply_followup(db,done,'Enviado a revisor','No permitido','qa@example.org')

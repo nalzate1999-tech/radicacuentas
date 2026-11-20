@@ -3,12 +3,8 @@
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <meta name="theme-color" content="#f6f7fc"/><meta name="robots" content="noindex,nofollow"/>
 <title>{% block title %}Inicio{% endblock %} | RadicaCuentas</title>
-<style>
-/* Respaldo inicial para mantener los pictogramas a escala durante la carga del CSS. */
-.svg-sprites{position:absolute;width:0;height:0;overflow:hidden;pointer-events:none}
-.icon{display:inline-block;width:20px;height:20px;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-</style>
-<link rel="stylesheet" href="/static/style.css?v=20261120-4"/>
+<style>.svg-sprites{position:absolute;width:0;height:0;overflow:hidden}.icon{display:inline-block;width:20px;height:20px;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}</style>
+<link rel="stylesheet" href="/static/style.css?v=20261120-search-mobile"/>
 </head><body>
 <svg xmlns="http://www.w3.org/2000/svg" class="svg-sprites" aria-hidden="true">
 <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.4"/><rect x="14" y="3" width="7" height="7" rx="1.4"/><rect x="3" y="14" width="7" height="7" rx="1.4"/><rect x="14" y="14" width="7" height="7" rx="1.4"/></symbol>
@@ -35,7 +31,7 @@
 <div class="app-shell">
 <aside class="sidebar">
 <a href="/panel" class="brand"><span class="brandmark"><svg class="icon"><use href="#i-grid"/></svg></span><span class="brand-copy"><strong>RadicaCuentas</strong><small>Plataforma de gestión</small></span></a>
-<div class="sidebar-section">ESPACIO DE TRABAJO</div>
+<button type="button" class="mobile-nav-toggle" id="mobile-nav-toggle" aria-controls="mobile-nav-panel" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg> Menú y herramientas</button><div class="sidebar-nav-panel" id="mobile-nav-panel"><div class="sidebar-section">ESPACIO DE TRABAJO</div>
 <nav class="nav-group" aria-label="Navegación principal">
 <a href="/panel" class="nav-item {% if request.url.path=='/panel' %}active{% endif %}"><svg class="icon"><use href="#i-grid"/></svg><span>Mi inicio</span></a>
 <a href="/proceso" class="nav-item {% if request.url.path=='/proceso' %}active{% endif %}"><svg class="icon"><use href="#i-route"/></svg><span>Cómo funciona el proceso</span></a>
@@ -58,11 +54,26 @@
 {% endif %}
 <div class="side-bottom"><div class="identity"><span class="avatar">{{ user.name[:1]|upper }}</span><span><b>{{ user.name }}</b><small>{{ 'Administrador' if user.role=='admin' else 'Usuario autorizado' }}</small></span></div>
 <a class="account-link" href="/perfil"><svg class="icon"><use href="#i-lock"/></svg> Seguridad de mi cuenta</a>
-<form action="/salir" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"/><button class="logout" type="submit"><svg class="icon"><use href="#i-signout"/></svg> Cerrar sesión</button></form></div>
+<form action="/salir" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"/><button class="logout" type="submit"><svg class="icon"><use href="#i-signout"/></svg> Cerrar sesión</button></form></div></div>
 </aside>
 <div class="body-content"><header class="topbar"><div class="topbar-leading"><span class="topbar-logo">R</span><span class="topbar-text">Sistema de radicación y seguimiento</span></div><div class="topbar-trailing"><span class="environment-tag"><span class="online-dot"></span>Entorno de pruebas</span><span class="user-dot">{{ user.email }}</span><span class="header-avatar">{{ user.name[:1]|upper }}</span></div></header>
 <main class="main">{% block content %}{% endblock %}</main>
 <footer class="main-footer">RadicaCuentas <span>·</span> Gestión documental y trazabilidad <span>·</span> Acceso controlado</footer></div>
 </div>
 {% else %}<main class="public-main">{% block content_public %}{% endblock %}</main>{% endif %}
-</body></html>
+<script>
+(() => {
+  const button = document.getElementById('mobile-nav-toggle');
+  const panel = document.getElementById('mobile-nav-panel');
+  if (!button || !panel) return;
+  const close = () => {panel.classList.remove('open');button.setAttribute('aria-expanded','false');};
+  button.addEventListener('click', () => {
+    const opened = panel.classList.toggle('open');
+    button.setAttribute('aria-expanded',String(opened));
+  });
+  document.addEventListener('keydown',event => {if (event.key==='Escape') close();});
+  document.addEventListener('click', event => {
+    if(!panel.contains(event.target) && !button.contains(event.target)) close();
+  });
+})();
+</script></body></html>

@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request, Depends, Form, HTTPException, UploadFile, 
 from fastapi.responses import RedirectResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select, func, or_, desc, text
+from sqlalchemy import select, func, or_, and_, desc, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
@@ -90,11 +90,10 @@ def find_invitation(db,token):
 
 @app.exception_handler(401)
 async def unauthenticated(request, exc):
-    # Navegacion de navegador: enviar al ingreso en vez de mostrar una pagina de error.
-    # Para clientes de API conservamos el codigo 401.
     if request.method == 'GET' and 'text/html' in request.headers.get('accept', '').lower():
         return RedirectResponse('/ingresar?sesion=expirada', status_code=303)
-    return JSONResponse({'detail': 'Debe iniciar sesion.'}, status_code=401, headers={'Cache-Control': 'no-store'})
+    return JSONResponse({'detail': 'Debe iniciar sesion.'}, status_code=401,
+                        headers={'Cache-Control': 'no-store'})
 
 @app.exception_handler(403)
 async def forbidden(request, exc):
@@ -159,7 +158,6 @@ def bootstrap_headers(response):
 @app.get('/configuracion-inicial')
 def initial_setup(request: Request, db: Session = Depends(db_session)):
     if db.scalar(select(func.count()).select_from(User)):
-        # Instalacion completada: no repetir el alta del primer administrador.
         return bootstrap_headers(redirect('/panel' if current_user(request, db) else '/ingresar?configuracion=lista'))
     if not settings.bootstrap_token or not settings.bootstrap_email:
         raise HTTPException(404)
@@ -295,34 +293,81 @@ def dashboard(request:Request,db:Session=Depends(db_session)):
     if not user_permissions(u):
         return render(request,db,'dashboard.html',total=0,closed=0,overdue=0,movements=0,by_status=[],recent=[],sla_color=sla_color)
     total=db.scalar(select(func.count()).select_from(Case)) or 0
-    closed=db.scalar(select(func.count()).select_from(Case).where(Case.current_status.in_(['CERRADA','PAGADA']))) or 0
+    closed=db.scalar(select(func.count()).select_from(Case).where(Case.current_status.in_(ARCHIVED_STATUSES))) or 0
     now=datetime.now(BOGOTA).date()
-    overdue=db.scalar(select(func.count()).select_from(Case).where(Case.sla_due<now,~Case.current_status.in_(['CERRADA','PAGADA','EN_MESA_DIRECTIVA','ENVIADA_A_FINANCIERA']))) or 0
+    overdue=db.scalar(select(func.count()).select_from(Case).where(Case.sla_due<now,~Case.current_status.in_([*ARCHIVED_STATUSES, 'EN_MESA_DIRECTIVA', 'ENVIADA_A_FINANCIERA']))) or 0
     events=db.scalar(select(func.count()).select_from(Event)) or 0
     by_status=db.execute(select(Case.current_status,func.count(Case.id_caso)).group_by(Case.current_status).order_by(desc(func.count(Case.id_caso))).limit(12)).all()
     recent=db.scalars(select(Case).order_by(desc(Case.created_at),desc(Case.id_caso)).limit(12)).all()
     return render(request,db,'dashboard.html',total=total,closed=closed,overdue=overdue,
                   movements=events,by_status=by_status,recent=recent,sla_color=sla_color)
 
+# Estados archivados: se incluyen en informes e historial, nunca en una bandeja de trabajo.
+ARCHIVED_STATUSES = frozenset({'CERRADA', 'CERRADO', 'PAGADA', 'PAGADO'})
+
+
+def _contains(value: str) -> str:
+    """Escapa comodines de LIKE para que el campo sea una busqueda literal."""
+    return '%' + value.replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%'
+
+
+def _case_search(token: str):
+    """Busca por contratista, referencias y responsables sin generar duplicados."""
+    term = _contains(token)
+    main_columns = (
+        Case.id_caso, Case.contractor_name, Case.document, Case.contract_no,
+        Case.contractor_email, Case.contractor_phone, Case.supervisor_name,
+        Case.supervisor_email, Case.followup_assignee, Case.reviewer,
+        Case.current_owner, Case.sent_by,
+    )
+    in_case = [col.ilike(term, escape='!') for col in main_columns]
+    in_task = (select(Subtask.id)
+               .where(Subtask.case_id == Case.id_caso,
+                      or_(Subtask.responsible.ilike(term, escape='!'),
+                          Subtask.provider.ilike(term, escape='!')))
+               .exists())
+    return or_(*in_case, in_task)
+
+
 @app.get('/casos')
-def cases(request:Request,q:str='',estado:str='',periodo:str='',accion:str='',page:int=1,db:Session=Depends(db_session)):
+def cases(request:Request,q:str='',estado:str='',periodo:str='',accion:str='',
+          vista:str='todos',page:int=1,db:Session=Depends(db_session)):
     require_permission(request,db,'casos')
-    if accion and accion not in ('revision','seguimiento','juridica'):raise HTTPException(400,'Formulario no reconocido.')
+    if accion and accion not in ('revision','seguimiento','juridica'):
+        raise HTTPException(400,'Formulario no reconocido.')
     if accion:require_permission(request,db,accion)
+    if vista not in ('todos', 'pendientes', 'cerrados'):
+        raise HTTPException(400, 'Filtro no reconocido.')
+    # Los expedientes cerrados se mantienen en busqueda e historico; no en tareas.
+    effective_view = 'pendientes' if accion else vista
     query=select(Case)
-    if q.strip():
-        term=f'%{q.strip()[:100]}%'
-        query=query.where(or_(Case.id_caso.ilike(term),Case.contractor_name.ilike(term),
-                              Case.contract_no.ilike(term),Case.document.ilike(term)))
-    if estado.strip():query=query.where(Case.current_status==estado)
-    if periodo.strip():query=query.where(Case.period==periodo)
+    if effective_view == 'pendientes':
+        query=query.where(~Case.current_status.in_(ARCHIVED_STATUSES))
+    elif effective_view == 'cerrados':
+        query=query.where(Case.current_status.in_(ARCHIVED_STATUSES))
+    if accion == 'revision':
+        query=query.where(Case.requires_reviewer.is_(True))
+    elif accion == 'juridica':
+        query=query.where(or_(Case.requires_legal.is_(True), Case.requires_technical.is_(True)))
+    cleaned=' '.join(q.split())[:140]
+    tokens=cleaned.split(' ')[:6] if cleaned else []
+    if tokens:
+        query=query.where(and_(*(_case_search(token) for token in tokens)))
+    if estado.strip():query=query.where(Case.current_status==estado.strip())
+    if periodo.strip():query=query.where(Case.period==periodo.strip()[:160])
     total=db.scalar(select(func.count()).select_from(query.subquery())) or 0
     page=max(1,page);page_size=30
     rows=db.scalars(query.order_by(desc(Case.registered_at),desc(Case.id_caso))
                     .limit(page_size).offset((page-1)*page_size)).all()
-    statuses=db.scalars(select(Case.current_status).distinct().order_by(Case.current_status)).all()
+    status_query=select(Case.current_status).distinct()
+    if effective_view == 'pendientes':
+        status_query=status_query.where(~Case.current_status.in_(ARCHIVED_STATUSES))
+    elif effective_view == 'cerrados':
+        status_query=status_query.where(Case.current_status.in_(ARCHIVED_STATUSES))
+    statuses=db.scalars(status_query.order_by(Case.current_status)).all()
     return render(request,db,'cases.html',rows=rows,total=total,page=page,pages=max(1,math.ceil(total/page_size)),
-                  q=q,estado=estado,periodo=periodo,accion=accion,statuses=statuses,sla_color=sla_color)
+                  q=cleaned,estado=estado,periodo=periodo,accion=accion,vista=effective_view,
+                  statuses=statuses,sla_color=sla_color,archived_statuses=ARCHIVED_STATUSES)
 
 @app.get('/casos/nuevo')
 def register_form(request:Request,db:Session=Depends(db_session)):
@@ -375,6 +420,8 @@ def case_detail(request:Request,case_id:str,event_page:int=1,db:Session=Depends(
 def reviewer_form(request:Request,case_id:str,db:Session=Depends(db_session)):
     require_permission(request,db,'revision');case=db.get(Case,case_id)
     if not case:raise HTTPException(404)
+    if case.current_status in ARCHIVED_STATUSES:
+        return redirect('/casos/'+quote(case_id))
     return render(request,db,'workflow.html',case=case,mode='revisor',options=list(REVIEW_ACTIONS),error=None)
 
 @app.post('/casos/{case_id}/revisor')
@@ -393,6 +440,8 @@ def reviewer_post(request:Request,case_id:str,csrf:str=Form(...),resultado:str=F
 def follow_form(request:Request,case_id:str,db:Session=Depends(db_session)):
     require_permission(request,db,'seguimiento');case=db.get(Case,case_id)
     if not case:raise HTTPException(404)
+    if case.current_status in ARCHIVED_STATUSES:
+        return redirect('/casos/'+quote(case_id))
     return render(request,db,'workflow.html',case=case,mode='seguimiento',options=list(FOLLOWUP_ACTIONS),error=None)
 
 @app.post('/casos/{case_id}/seguimiento')
@@ -414,6 +463,8 @@ def follow_post(request:Request,case_id:str,csrf:str=Form(...),accion:str=Form(.
 def legal_form(request:Request,case_id:str,db:Session=Depends(db_session)):
     require_permission(request,db,'juridica');case=db.get(Case,case_id)
     if not case:raise HTTPException(404)
+    if case.current_status in ARCHIVED_STATUSES:
+        return redirect('/casos/'+quote(case_id))
     return render(request,db,'workflow.html',case=case,mode='abogados',options=LEGAL_OUTCOMES,error=None)
 
 @app.post('/casos/{case_id}/abogados')
@@ -466,10 +517,13 @@ def reports(request:Request,db:Session=Depends(db_session)):
     by_owner=db.execute(select(Case.current_owner,func.count(Case.id_caso))
                         .group_by(Case.current_owner).order_by(desc(func.count(Case.id_caso)))).all()
     by_assignee=db.execute(select(Case.followup_assignee,func.count(Case.id_caso))
+                           .where(~Case.current_status.in_(ARCHIVED_STATUSES))
                            .group_by(Case.followup_assignee).order_by(desc(func.count(Case.id_caso))).limit(30)).all()
     total=db.scalar(select(func.count(Case.id_caso))) or 0
+    closed=db.scalar(select(func.count(Case.id_caso)).where(Case.current_status.in_(ARCHIVED_STATUSES))) or 0
     events=db.scalar(select(func.count(Event.id))) or 0
-    return render(request,db,'reports.html',by_owner=by_owner,by_assignee=by_assignee,total=total,events=events)
+    return render(request,db,'reports.html',by_owner=by_owner,by_assignee=by_assignee,
+                  total=total,closed=closed,pending=total-closed,events=events)
 
 @app.get('/informes/casos.csv')
 def export_csv(request:Request,db:Session=Depends(db_session)):
@@ -649,7 +703,7 @@ def change_password(request:Request,csrf:str=Form(...),old_password:str=Form(...
 def holidays_page(request:Request,db:Session=Depends(db_session)):
     from .models import Holiday
     require_user(request,db,['admin'])
-    holidays=db.scalars(select(Holiday).order_by(Holiday.day.desc()).limit(90)).all()
+    holidays=db.scalars(select(Holiday).order_by(Holiday.day.asc())).all()
     return render(request,db,'holidays.html',holidays=holidays,error=None)
 
 @app.post('/festivos')
