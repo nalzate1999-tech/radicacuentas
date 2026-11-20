@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from alembic import op
 import sqlalchemy as sa
 
-revision = '0005_remove_empty_mig_case_placeholders'
+revision = '0005_cleanup_mig_cases'
 down_revision = '0004_remove_selected_mig_cases'
 branch_labels = None
 depends_on = None
