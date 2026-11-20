@@ -1,4 +1,5 @@
 {% extends 'base.html' %}{% block title %}Gestión {{ mode }}{% endblock %}{% block content %}
+<div class="workflow-back"><a href="/bandeja">&larr; Volver a mi bandeja</a><span>Reporte de novedad &middot; {{ case.id_caso }}</span></div>
 <div class="pagehead"><div><div class="eyebrow">FORMULARIO {{ '02 · SUPERVISOR/REVISOR' if mode=='revisor' else ('03 · SEGUIMIENTO' if mode=='seguimiento' else '04 · ABOGADOS') }}</div>
 <h1>{{ 'Revisión del supervisor' if mode=='revisor' else ('Gestión de envíos' if mode=='seguimiento' else 'Revisión jurídica o técnica') }}</h1><p>Expediente {{ case.id_caso }} · {{ case.contractor_name }}</p></div><a href="/casos/{{ case.id_caso }}" class="btn">← Volver al caso</a></div>
 {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
