@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request, Depends, Form, HTTPException, UploadFile, 
 from fastapi.responses import RedirectResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select, func, or_, and_, desc, text
+from sqlalchemy import select, func, or_, and_, desc, text, case as sql_case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
@@ -25,8 +25,8 @@ from .models import (Base, User, Case, Event, Subtask, RadContract, RadMonth,
                      ImportBatch, ImportIssue, Personnel, FormResponse, Audit, Notification, AuthAttempt)
 from .services import (BOGOTA, FOLLOWUP_ACTIONS, REVIEW_ACTIONS, LEGAL_OUTCOMES,
                        REVIEWERS, PROVIDERS, SUBTASK_TYPES, BusinessError, create_case,
-                       apply_followup, apply_review, apply_legal, sla_color, audit, utcnow)
-from .importer import migrate_workbook
+                       apply_followup, apply_review, apply_legal, sla_color, audit, utcnow, STOP_STATUSES)
+from .case_metrics import case_age_info
 
 settings=get_settings()
 app=FastAPI(title='Radicación y seguimiento de cuentas',docs_url=None,redoc_url=None,openapi_url=None)
@@ -291,7 +291,7 @@ def logout(request:Request,csrf:str=Form(...)):
 def dashboard(request:Request,db:Session=Depends(db_session)):
     u=require_user(request,db)
     if not user_permissions(u):
-        return render(request,db,'dashboard.html',total=0,closed=0,overdue=0,movements=0,by_status=[],recent=[],sla_color=sla_color)
+        return render(request,db,'dashboard.html',total=0,closed=0,overdue=0,movements=0,by_status=[],recent=[],sla_color=sla_color,recent_age={})
     total=db.scalar(select(func.count()).select_from(Case)) or 0
     closed=db.scalar(select(func.count()).select_from(Case).where(Case.current_status.in_(ARCHIVED_STATUSES))) or 0
     now=datetime.now(BOGOTA).date()
@@ -300,10 +300,40 @@ def dashboard(request:Request,db:Session=Depends(db_session)):
     by_status=db.execute(select(Case.current_status,func.count(Case.id_caso)).group_by(Case.current_status).order_by(desc(func.count(Case.id_caso))).limit(12)).all()
     recent=db.scalars(select(Case).order_by(desc(Case.created_at),desc(Case.id_caso)).limit(12)).all()
     return render(request,db,'dashboard.html',total=total,closed=closed,overdue=overdue,
-                  movements=events,by_status=by_status,recent=recent,sla_color=sla_color)
+                  movements=events,by_status=by_status,recent=recent,sla_color=sla_color,
+                  recent_age=_case_age_map(db,recent))
 
 # Estados archivados: se incluyen en informes e historial, nunca en una bandeja de trabajo.
 ARCHIVED_STATUSES = frozenset({'CERRADA', 'CERRADO', 'PAGADA', 'PAGADO'})
+
+SLA_FILTERS = frozenset({'vencido', 'por_vencer', 'en_plazo', 'sin_sla'})
+
+
+def _sla_filter(sla, today):
+    active = ~Case.current_status.in_(STOP_STATUSES)
+    tomorrow = today + timedelta(days=1)
+    if sla == 'vencido':
+        return and_(active, Case.sla_due.is_not(None), Case.sla_due < today)
+    if sla == 'por_vencer':
+        return and_(active, Case.sla_due >= today, Case.sla_due <= tomorrow)
+    if sla == 'en_plazo':
+        return and_(active, Case.sla_due > tomorrow)
+    return or_(Case.sla_due.is_(None), Case.current_status.in_(STOP_STATUSES))
+
+
+def _case_age_map(db, rows):
+    """One aggregate query for the visible cases, avoiding per-row DB lookups."""
+    ids=[c.id_caso for c in rows]
+    if not ids:
+        return {}
+    history=db.execute(select(
+        Event.case_id,
+        func.min(Event.occurred_at),
+        func.min(sql_case((Event.resulting_status.in_(ARCHIVED_STATUSES), Event.occurred_at), else_=None))
+    ).where(Event.case_id.in_(ids)).group_by(Event.case_id)).all()
+    found={case_id:(first,close) for case_id,first,close in history}
+    today=datetime.now(BOGOTA).date()
+    return {c.id_caso:case_age_info(c, *(found.get(c.id_caso,(None,None))),today=today) for c in rows}
 
 
 def _contains(value: str) -> str:
@@ -331,13 +361,15 @@ def _case_search(token: str):
 
 @app.get('/casos')
 def cases(request:Request,q:str='',estado:str='',periodo:str='',accion:str='',
-          vista:str='todos',page:int=1,db:Session=Depends(db_session)):
+          vista:str='todos',sla:str='',page:int=1,db:Session=Depends(db_session)):
     require_permission(request,db,'casos')
     if accion and accion not in ('revision','seguimiento','juridica'):
         raise HTTPException(400,'Formulario no reconocido.')
     if accion:require_permission(request,db,accion)
     if vista not in ('todos', 'pendientes', 'cerrados'):
         raise HTTPException(400, 'Filtro no reconocido.')
+    if sla and sla not in SLA_FILTERS:
+        raise HTTPException(400, 'Estado SLA no reconocido.')
     # Los expedientes cerrados se mantienen en busqueda e historico; no en tareas.
     effective_view = 'pendientes' if accion else vista
     query=select(Case)
@@ -355,6 +387,8 @@ def cases(request:Request,q:str='',estado:str='',periodo:str='',accion:str='',
         query=query.where(and_(*(_case_search(token) for token in tokens)))
     if estado.strip():query=query.where(Case.current_status==estado.strip())
     if periodo.strip():query=query.where(Case.period==periodo.strip()[:160])
+    if sla:
+        query=query.where(_sla_filter(sla, datetime.now(BOGOTA).date()))
     total=db.scalar(select(func.count()).select_from(query.subquery())) or 0
     page=max(1,page);page_size=30
     rows=db.scalars(query.order_by(desc(Case.registered_at),desc(Case.id_caso))
@@ -367,6 +401,7 @@ def cases(request:Request,q:str='',estado:str='',periodo:str='',accion:str='',
     statuses=db.scalars(status_query.order_by(Case.current_status)).all()
     return render(request,db,'cases.html',rows=rows,total=total,page=page,pages=max(1,math.ceil(total/page_size)),
                   q=cleaned,estado=estado,periodo=periodo,accion=accion,vista=effective_view,
+                  sla=sla,case_age=_case_age_map(db,rows),
                   statuses=statuses,sla_color=sla_color,archived_statuses=ARCHIVED_STATUSES)
 
 @app.get('/casos/nuevo')
@@ -414,7 +449,7 @@ def case_detail(request:Request,case_id:str,event_page:int=1,db:Session=Depends(
                          .order_by(FormResponse.submitted_at.desc()).limit(15)).all()
     return render(request,db,'case_detail.html',case=case,events=events,tasks=tasks,
                   responses=responses,event_page=event_page,event_pages=max(1,math.ceil(n_events/60)),
-                  total_events=n_events,sla_color=sla_color)
+                  total_events=n_events,sla_color=sla_color,age=_case_age_map(db,[case])[case_id])
 
 @app.get('/casos/{case_id}/revisor')
 def reviewer_form(request:Request,case_id:str,db:Session=Depends(db_session)):
@@ -550,41 +585,6 @@ def export_csv(request:Request,db:Session=Depends(db_session)):
                  headers={'Content-Disposition':'attachment; filename="casos_radicacion.csv"',
                           'Cache-Control':'no-store'})
 
-@app.get('/administracion')
-def administration(request:Request,page:int=1,db:Session=Depends(db_session)):
-    require_user(request,db,['admin'])
-    batches=db.scalars(select(ImportBatch).order_by(ImportBatch.imported_at.desc()).limit(10)).all()
-    issues=db.scalars(select(ImportIssue).order_by(ImportIssue.id.desc()).limit(60).offset((max(1,page)-1)*60)).all()
-    total_issues=db.scalar(select(func.count()).select_from(ImportIssue)) or 0
-    return render(request,db,'administration.html',batches=batches,issues=issues,
-                  page=max(1,page),total_issues=total_issues,error=None)
-
-@app.post('/administracion/importar')
-def admin_import(request:Request,csrf:str=Form(...),archivo:UploadFile=File(...),db:Session=Depends(db_session)):
-    require_user(request,db,['admin']);check_csrf(request,csrf)
-    if not archivo.filename or not archivo.filename.lower().endswith('.xlsx'):
-        raise HTTPException(400,'Cargue un archivo .xlsx')
-    max_size=35*1024*1024
-    with tempfile.NamedTemporaryFile(suffix='.xlsx',delete=False) as tmp:
-        path=tmp.name;total=0
-        while True:
-            chunk=archivo.file.read(1024*1024)
-            if not chunk:break
-            total+=len(chunk)
-            if total>max_size:
-                tmp.close();Path(path).unlink(missing_ok=True)
-                raise HTTPException(413,'Archivo superior a 35 MB: use importación por línea de comandos.')
-            tmp.write(chunk)
-    try:
-        migrate_workbook(path)
-        return redirect('/administracion')
-    except (ValueError,Exception) as exc:
-        # No exponer stacktrace ni rutas de infraestructura en el navegador.
-        return templates.TemplateResponse(request,'administration.html',ctx(request,db,
-            batches=db.scalars(select(ImportBatch).order_by(ImportBatch.imported_at.desc()).limit(10)).all(),
-            issues=[],page=1,total_issues=0,error='No se completó la importación: '+str(exc)[:220]),status_code=400)
-    finally:Path(path).unlink(missing_ok=True)
-
 @app.get('/usuarios')
 def users_page(request:Request,db:Session=Depends(db_session)):
     require_user(request,db,['admin'])
@@ -663,13 +663,6 @@ def toggle_user(request:Request,uid:int,csrf:str=Form(...),db:Session=Depends(db
     target.active=not target.active
     audit(db,admin.email,'CAMBIAR_USUARIO',target.email,{'active':target.active})
     db.commit();return redirect('/usuarios')
-
-@app.get('/proceso')
-def process_guide(request:Request,db:Session=Depends(db_session)):
-    u=require_user(request,db)
-    return render(request,db,'process.html',followup_actions=FOLLOWUP_ACTIONS,
-                  review_actions=REVIEW_ACTIONS,legal_outcomes=LEGAL_OUTCOMES,
-                  my_permissions=user_permissions(u))
 
 @app.get('/auditoria')
 def audits_page(request:Request,page:int=1,db:Session=Depends(db_session)):
