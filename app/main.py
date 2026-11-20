@@ -27,6 +27,9 @@ from .services import (BOGOTA, FOLLOWUP_ACTIONS, REVIEW_ACTIONS, LEGAL_OUTCOMES,
                        REVIEWERS, PROVIDERS, SUBTASK_TYPES, BusinessError, create_case,
                        apply_followup, apply_review, apply_legal, sla_color, audit, utcnow, STOP_STATUSES)
 from .case_metrics import case_age_info
+from .analytics import report_data
+from .work_queue import (queue_query, authorized_workflows, recommended_workflow,
+                         WORKFLOW_LABELS)
 
 settings=get_settings()
 app=FastAPI(title='Radicación y seguimiento de cuentas',docs_url=None,redoc_url=None,openapi_url=None)
@@ -46,8 +49,8 @@ FORM_PERMISSIONS={
 }
 EXTRA_PERMISSIONS={
     'casos':'Consulta de expedientes',
-    'radicacion':'Radicación mensual',
-    'informes':'Informes e indicadores',
+    'radicacion':'Radicación mensual (histórico)',
+    'informes':'Gestión y cumplimiento',
     'exportar':'Exportación de información',
 }
 PERMISSIONS={**FORM_PERMISSIONS,**EXTRA_PERMISSIONS}
@@ -291,7 +294,7 @@ def logout(request:Request,csrf:str=Form(...)):
 def dashboard(request:Request,db:Session=Depends(db_session)):
     u=require_user(request,db)
     if not user_permissions(u):
-        return render(request,db,'dashboard.html',total=0,closed=0,overdue=0,movements=0,by_status=[],recent=[],sla_color=sla_color,recent_age={})
+        return render(request,db,'dashboard.html',total=0,closed=0,overdue=0,movements=0,by_status=[],recent=[],sla_color=sla_color,recent_age={},inbox=[],inbox_count=0,inbox_scope='mios',inbox_actions={})
     total=db.scalar(select(func.count()).select_from(Case)) or 0
     closed=db.scalar(select(func.count()).select_from(Case).where(Case.current_status.in_(ARCHIVED_STATUSES))) or 0
     now=datetime.now(BOGOTA).date()
@@ -299,9 +302,19 @@ def dashboard(request:Request,db:Session=Depends(db_session)):
     events=db.scalar(select(func.count()).select_from(Event)) or 0
     by_status=db.execute(select(Case.current_status,func.count(Case.id_caso)).group_by(Case.current_status).order_by(desc(func.count(Case.id_caso))).limit(12)).all()
     recent=db.scalars(select(Case).order_by(desc(Case.created_at),desc(Case.id_caso)).limit(12)).all()
+    inbox_scope='equipo' if u.role=='admin' else 'mios'
+    inbox=[];inbox_count=0;inbox_actions={}
+    perms=user_permissions(u)
+    if authorized_workflows(perms):
+        iq=queue_query(perms,u,scope=inbox_scope)
+        inbox_count=db.scalar(select(func.count()).select_from(iq.subquery())) or 0
+        inbox=db.scalars(iq.order_by(Case.sla_due.asc().nulls_last(),Case.registered_at.desc())
+                         .limit(6)).all()
+        inbox_actions={c.id_caso:recommended_workflow(c,perms) for c in inbox}
     return render(request,db,'dashboard.html',total=total,closed=closed,overdue=overdue,
                   movements=events,by_status=by_status,recent=recent,sla_color=sla_color,
-                  recent_age=_case_age_map(db,recent))
+                  recent_age=_case_age_map(db,recent),inbox=inbox,inbox_count=inbox_count,
+                  inbox_scope=inbox_scope,inbox_actions=inbox_actions)
 
 # Estados archivados: se incluyen en informes e historial, nunca en una bandeja de trabajo.
 ARCHIVED_STATUSES = frozenset({'CERRADA', 'CERRADO', 'PAGADA', 'PAGADO'})
@@ -358,6 +371,43 @@ def _case_search(token: str):
                .exists())
     return or_(*in_case, in_task)
 
+
+@app.get('/bandeja')
+def work_inbox(request:Request,q:str='',gestion:str='',vista:str='',sla:str='',page:int=1,
+               db:Session=Depends(db_session)):
+    u=require_user(request,db)
+    perms=user_permissions(u)
+    allowed=authorized_workflows(perms)
+    if not allowed:
+        raise HTTPException(403,'No tiene formularios de gestion autorizados.')
+    if gestion and gestion not in allowed:
+        raise HTTPException(403,'No tiene autorizado ese formulario.')
+    scope=vista or ('equipo' if u.role=='admin' else 'mios')
+    if scope not in ('mios','equipo'):
+        raise HTTPException(400,'Vista de bandeja no reconocida.')
+    if sla and sla not in SLA_FILTERS:
+        raise HTTPException(400,'Estado SLA no reconocido.')
+    query=queue_query(perms,u,workflow=gestion,scope=scope)
+    cleaned=' '.join(q.split())[:140]
+    for token in cleaned.split(' ')[:6] if cleaned else []:
+        query=query.where(_case_search(token))
+    today=datetime.now(BOGOTA).date()
+    if sla:
+        query=query.where(_sla_filter(sla,today))
+    total=db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    page=max(1,page)
+    per_page=20
+    priority=sql_case((Case.sla_due < today,0),
+                      (Case.sla_due <= today+timedelta(days=1),1),else_=2)
+    rows=db.scalars(query.order_by(priority,Case.sla_due.asc().nulls_last(),
+                Case.registered_at.desc(),Case.id_caso.desc())
+                .limit(per_page).offset((page-1)*per_page)).all()
+    actions={c.id_caso:recommended_workflow(c,perms,gestion) for c in rows}
+    return render(request,db,'inbox.html',rows=rows,total=total,page=page,
+                  pages=max(1,math.ceil(total/per_page)),gestion=gestion,vista=scope,
+                  q=cleaned,sla=sla,allowed_workflows=allowed,
+                  workflow_labels=WORKFLOW_LABELS,actions=actions,sla_color=sla_color,
+                  case_age=_case_age_map(db,rows))
 
 @app.get('/casos')
 def cases(request:Request,q:str='',estado:str='',periodo:str='',accion:str='',
@@ -547,18 +597,16 @@ def rad_update(request:Request,contract_id:int,month:int,csrf:str=Form(...),
     db.commit();return redirect('/radicacion?year='+str(year))
 
 @app.get('/informes')
-def reports(request:Request,db:Session=Depends(db_session)):
+def reports(request:Request,periodo:str='',responsable:str='',anio:int=0,
+            db:Session=Depends(db_session)):
     require_permission(request,db,'informes')
-    by_owner=db.execute(select(Case.current_owner,func.count(Case.id_caso))
-                        .group_by(Case.current_owner).order_by(desc(func.count(Case.id_caso)))).all()
-    by_assignee=db.execute(select(Case.followup_assignee,func.count(Case.id_caso))
-                           .where(~Case.current_status.in_(ARCHIVED_STATUSES))
-                           .group_by(Case.followup_assignee).order_by(desc(func.count(Case.id_caso))).limit(30)).all()
-    total=db.scalar(select(func.count(Case.id_caso))) or 0
-    closed=db.scalar(select(func.count(Case.id_caso)).where(Case.current_status.in_(ARCHIVED_STATUSES))) or 0
-    events=db.scalar(select(func.count(Event.id))) or 0
-    return render(request,db,'reports.html',by_owner=by_owner,by_assignee=by_assignee,
-                  total=total,closed=closed,pending=total-closed,events=events)
+    if anio and not (2020<=anio<=2100):
+        raise HTTPException(400,'Anio no valido.')
+    try:
+        metrics=report_data(db,period=periodo,assignee=responsable,year=anio or None)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc))
+    return render(request,db,'reports.html',**metrics)
 
 @app.get('/informes/casos.csv')
 def export_csv(request:Request,db:Session=Depends(db_session)):
