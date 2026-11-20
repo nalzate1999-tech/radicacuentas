@@ -313,3 +313,86 @@ def test_form_actions_are_consolidated_into_case_filters():
     assert 'name="accion"' not in page.text
     assert viewer.get('/casos',params={'accion':'revision'}).status_code==403
     assert viewer.get('/casos/nuevo').status_code==403
+
+
+def test_personal_queue_team_search_and_one_click_report():
+    from datetime import datetime, timedelta, timezone
+    key=uuid.uuid4().hex[:10]
+    username='Laura Especial '+key
+    email='laura-'+key+'@example.org'
+    open_id='QA-BANDEJA-'+key
+    other_id='QA-BANDEJA-OTRO-'+key
+    archived_id='QA-BANDEJA-CERRADO-'+key
+    with SessionLocal.begin() as db:
+        db.add(User(name=username,email=email,
+                    password_hash=ph.hash('Contraseña-Muy-Segura-2026!'),
+                    role='consulta',active=True,form_permissions=['revision','casos']))
+        for ident, reviewer, status in [
+            (open_id,username,'EN_PRIMERA_REVISION'),
+            (other_id,'Persona Distinta','EN_PRIMERA_REVISION'),
+            (archived_id,username,'CERRADA'),
+        ]:
+            db.add(Case(id_caso=ident,source='web',contractor_name='Contratista '+key,
+                        contract_no='CT-'+key,document='123'+key,period='202611',
+                        followup_assignee='Otro Gestor',reviewer=reviewer,
+                        current_status=status,current_owner='Revisor',
+                        requires_reviewer=True,
+                        registered_at=datetime.now(timezone.utc),
+                        sla_due=datetime.now(timezone.utc).date()+timedelta(days=1)))
+    person=client_as(email)
+    mine=person.get('/bandeja')
+    assert mine.status_code==200,mine.text[:500]
+    assert open_id in mine.text
+    assert other_id not in mine.text and archived_id not in mine.text
+    assert '/casos/'+open_id+'/revisor' in mine.text
+    assert 'Registrar novedad' in mine.text
+    team=person.get('/bandeja',params={'vista':'equipo','q':'CT-'+key})
+    assert team.status_code==200
+    assert open_id in team.text and other_id in team.text and archived_id not in team.text
+    assert person.get('/bandeja',params={'gestion':'juridica'}).status_code==403
+    assert person.get('/bandeja',params={'vista':'bogus'}).status_code==400
+    assert person.get('/bandeja',params={'sla':'unknown'}).status_code==400
+    assert person.get('/informes').status_code==403
+    home=person.get('/panel')
+    assert home.status_code==200 and 'Mi bandeja' in home.text
+    assert person.get('/casos/'+open_id+'/revisor').status_code==200
+    assert 'Volver a mi bandeja' in person.get('/casos/'+open_id+'/revisor').text
+    viewer=client_as('viewer@example.org')
+    assert viewer.get('/bandeja').status_code==403
+
+
+def test_percentage_dashboard_denominators_and_radication_aggregation():
+    from datetime import datetime, timedelta, timezone
+    from app.models import RadContract, RadMonth
+    from sqlalchemy import select
+    key=uuid.uuid4().hex[:8]
+    owner='Analista QA '+key
+    current=datetime.now(timezone.utc)
+    cases=[('CERRADA',None),('RECIBIDA',current.date()-timedelta(days=1)),
+           ('RECIBIDA',current.date()+timedelta(days=3)),('RECIBIDA',None)]
+    with SessionLocal.begin() as db:
+        for i,(status,due) in enumerate(cases):
+            c=Case(id_caso=f'QA-PCT-{key}-{i}',source='web',
+                contractor_name='Personaje QA',period='202612',
+                followup_assignee=owner,current_status=status,
+                current_owner='Seguimiento',sla_due=due,
+                received_at=current,registered_at=current)
+            db.add(c)
+            if i==1:
+                db.add(Event(case_id=c.id_caso,raw_case_id=c.id_caso,
+                             kind='DEVUELTA_POR_FINANCIERA',source='web'))
+    admin=client_as('qa@example.org')
+    report=admin.get('/informes',params={'periodo':'202612','responsable':owner})
+    assert report.status_code==200,report.text[:200]
+    assert 'Gestion y cumplimiento' in report.text
+    assert '25.0' in report.text and '50.0' in report.text
+    assert '1 de 4 expedientes' in report.text
+    assert '1 de 2 expedientes' in report.text
+    assert 'Casos con al menos un evento de devolucion' in report.text
+    assert admin.get('/informes',params={'periodo':'2026AA'}).status_code==400
+    no_data=admin.get('/informes',params={'periodo':'202701'})
+    assert no_data.status_code==200
+    assert 'Sin datos' in no_data.text
+    assert 'Radicacion registrada' in report.text
+    homepage=admin.get('/panel')
+    assert 'Mi bandeja de trabajo' in homepage.text
