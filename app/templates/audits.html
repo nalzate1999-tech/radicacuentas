@@ -1,5 +1,0 @@
-{% extends 'base.html' %}{% block title %}Auditoría{% endblock %}{% block content %}
-<div class="pagehead"><div><div class="eyebrow">SEGURIDAD Y TRAZABILIDAD</div><h1>Auditoría de RadicaCuentas</h1><p>Acciones realizadas dentro del aplicativo. La hoja LOG técnica del sistema anterior se omite; la historia del expediente se consulta en cada caso.</p></div></div>
-<section class="panel"><div class="panel-heading"><h2>Acciones registradas</h2></div>
-{% for a in recent %}<div class="task"><div><b>{{ a.action.replace('_',' ') }}</b><small>{{ a.actor }} · {{ a.created_at }}</small><small>{{ a.target }}</small></div></div>{% else %}<p class="muted">Todavía no se han realizado acciones en este entorno.</p>{% endfor %}
-<div class="pagination"><span>Página {{ page }}</span><div>{% if page>1 %}<a class="btn" href="?page={{ page-1 }}">Anterior</a>{% endif %}{% if recent|length==40 %}<a class="btn" href="?page={{ page+1 }}">Siguiente</a>{% endif %}</div></div></section>{% endblock %}

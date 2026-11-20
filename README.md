@@ -44,7 +44,7 @@ Requisitos: Docker Engine + Docker Compose, almacenamiento persistente, copia de
 2. Copie `.env.example` a `.env` y cambie `POSTGRES_PASSWORD` y `SECRET_KEY` por secretos generados localmente. Ejemplo de secreto: `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
 3. Deje `APP_ENV=development`, `SESSION_HTTPS_ONLY=0` y `ALLOWED_HOSTS=localhost,127.0.0.1` **solo para pruebas locales**.
 4. Ejecute `docker compose up -d --build`. La primera puesta en marcha aplica `alembic upgrade head`.
-5. Para habilitar la primera cuenta sin consola, configure `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` en el entorno privado; luego abra `/configuracion-inicial` y establezca la contraseña de administrador. La ruta queda inactiva después de crear la cuenta.
+5. Para habilitar la primera cuenta sin consola, configure `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` en el entorno privado; entregue al responsable un enlace privado `https://SU_DOMINIO/configuracion-inicial#activar=SU_TOKEN`. El responsable abre el enlace y establece su contraseña sin escribir códigos. La ruta queda inactiva después de crear la cuenta.
 6. Abra `http://127.0.0.1:8000`, inicie sesión y entre a **Migración**. Cargue el **Excel original**, sin modificarlo. El servicio no envía correos hasta habilitar SMTP.
 7. Verifique las cifras de la pantalla de Migración. Para ejecutar un control formal desde el mismo equipo que dispone del archivo: `docker compose cp "Rev cuentas.xlsx" web:/tmp/rev_cuentas.xlsx` y `docker compose exec web python scripts/verificar_migracion.py /tmp/rev_cuentas.xlsx`. Después elimine la copia temporal: `docker compose exec -u root web rm -f /tmp/rev_cuentas.xlsx`.
 8. Para abrir el aplicativo a usuarios fuera del equipo, configure primero **HTTPS real** (Nginx/Caddy/Traefik, certificados válidos), `APP_ENV=production`, `SESSION_HTTPS_ONLY=1`, `ALLOWED_HOSTS=dominio.institucional.gov.co` y `APP_URL=https://dominio.institucional.gov.co`. El Docker Compose suministrado expone el puerto 8000 **solo en 127.0.0.1**, deliberadamente.
@@ -62,7 +62,7 @@ Sitios oficiales: https://render.com y https://render.com/docs/blueprint-spec
 2. En https://dashboard.render.com elija **New → Blueprint** y conecte el repositorio privado. El Blueprint prepara una aplicación web y una base PostgreSQL 17 de pago con la base restringida a red privada.
 3. Configure `ALLOWED_HOSTS` con el dominio real del servicio (por ejemplo `radicacion-cuentas.onrender.com`) y `APP_URL` con la URL HTTPS correspondiente. En el primer despliegue ajuste estas variables cuando Render haya confirmado el dominio. `SECRET_KEY` se genera automáticamente y `SESSION_HTTPS_ONLY=1`.
 4. Espere al estado de despliegue satisfactorio y verifique `https://su-dominio/health` (debe devolver `{"status":"ok"}`). Se crean las tablas con `alembic upgrade head`.
-5. Configure `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` en las variables privadas. Abra `/configuracion-inicial` y cree el administrador sin usar terminal.
+5. Configure `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` en las variables privadas. Abra el enlace privado `/configuracion-inicial#activar=SU_TOKEN` y cree el administrador sin usar terminal ni introducir un código.
 6. Abra `https://su-dominio/ingresar`; entre como administrador y cargue `Rev cuentas.xlsx` desde **Migración** (pantalla de carga protegida; límite 35 MB). Para cargas superiores conviene ejecutar el importador dentro del contenedor, sin pasar el archivo por una petición web.
 7. Revise **Migración**, **Casos**, **Radicación mensual** y **Auditoría**. Habilite copias y recuperación de PostgreSQL en Render, supervise consumo, rendimiento y errores.
 
@@ -77,7 +77,7 @@ Guía oficial: https://railway.com/guides/fastapi y https://docs.railway.com/dat
 1. Suba el código (no los datos) a repositorio privado y conecte el repositorio desde **Railway → New Project → Deploy from GitHub**. Railway construye con `Dockerfile`.
 2. Agregue una base **PostgreSQL** al proyecto. En el servicio web, agregue la variable de referencia `DATABASE_URL` correspondiente al servicio PostgreSQL (habitualmente `${{Postgres.DATABASE_URL}}` si ese es el nombre real del servicio).
 3. Configure `SECRET_KEY` aleatorio de al menos 32 caracteres, `APP_ENV=production`, `SESSION_HTTPS_ONLY=1`, `ALLOWED_HOSTS` con el hostname de Railway, `APP_URL` y `NOTIFICATIONS_ENABLED=0`.
-4. En Networking seleccione **Generate Domain** y verifique `/health`. Configure `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` y cree el administrador desde `/configuracion-inicial`; después cargue el Excel **solo** en la pantalla privada de migración. Active backups y HTTPS.
+4. En Networking seleccione **Generate Domain** y verifique `/health`. Configure `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` y cree el administrador desde el enlace privado `/configuracion-inicial#activar=SU_TOKEN`; después cargue el Excel **solo** en la pantalla privada de migración. Active backups y HTTPS.
 
 ## Migración controlada y verificación
 
@@ -131,7 +131,7 @@ Estas pruebas verifican login, CSRF, roles, registro sin adjuntos, duplicados, l
 
 La nueva interfaz utiliza superficies tonales, tarjetas de trabajo, tipografía de alta legibilidad, diseño adaptable y navegación por capacidad. No requiere React ni depender de servicios externos de Google Fonts. El administrador puede crear usuarios **sin consola**: nombre, correo y selección independiente de los cuatro formularios, además de módulos auxiliares. Cada cuenta recibe un enlace privado de activación, de uso único y 72 horas de vigencia; el usuario establece su contraseña.
 
-**Configuración inicial:** `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` activan `/configuracion-inicial` mientras `users` está vacía. La creación única se protege con CSRF, límite de intentos y bloqueo de transacción sobre PostgreSQL. Después de crear la primera cuenta, esta ruta deja de estar disponible.
+**Configuración inicial:** `BOOTSTRAP_EMAIL` y `BOOTSTRAP_TOKEN` activan `/configuracion-inicial` mientras `users` está vacía. El enlace guarda el token únicamente en el fragmento del navegador; su validación abre una sesión firmada durante 15 minutos, con CSRF, límite de intentos y bloqueo de transacción sobre PostgreSQL. No se muestra un campo de código en el formulario. Después de crear la primera cuenta, esta ruta deja de estar disponible.
 
 **Migración 2026:** desde el menú administrativo, el usuario puede cargar `Rev cuentas.xlsx`. Un ensayo local sobre la fuente proporcionada confirmó **10 hojas operativas (9 con registros) y 18.490 filas crudas**, además de 1.292 casos, 8.555 eventos, 8.371 respuestas históricas, 157 subtareas y 112 contratos de radicación. La migración en Railway debe ejecutarla el administrador autorizado. No incluir el archivo fuente en GitHub.
 

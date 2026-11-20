@@ -129,40 +129,86 @@ def render(request,db,template,**extra):
 def redirect(path):return RedirectResponse(path,status_code=303)
 
 
+def bootstrap_authorized(request: Request) -> bool:
+    """Only a time-limited signed session, established via a private link, may bootstrap admin."""
+    if not settings.bootstrap_token:
+        return False
+    timestamp = request.session.get('bootstrap_verified_at')
+    signature = request.session.get('bootstrap_signature')
+    now = int(datetime.now(timezone.utc).timestamp())
+    if not isinstance(timestamp, int) or timestamp < now - 900 or timestamp > now + 30:
+        return False
+    expected = hashlib.sha256(settings.bootstrap_token.encode()).hexdigest()
+    return isinstance(signature, str) and secrets.compare_digest(signature, expected)
+
+
+def bootstrap_headers(response):
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    return response
+
+
 @app.get('/configuracion-inicial')
-def initial_setup(request:Request,db:Session=Depends(db_session)):
+def initial_setup(request: Request, db: Session = Depends(db_session)):
     if db.scalar(select(func.count()).select_from(User)) or not settings.bootstrap_token or not settings.bootstrap_email:
         raise HTTPException(404)
-    return render(request,db,'setup.html',error=None,admin_email=settings.bootstrap_email)
+    return bootstrap_headers(render(request, db, 'setup.html', error=None,
+                                    admin_email=settings.bootstrap_email,
+                                    authorized=bootstrap_authorized(request)))
+
+
+@app.post('/configuracion-inicial/validar')
+def verify_initial_setup_link(request: Request, csrf: str = Form(...), token: str = Form(...),
+                              db: Session = Depends(db_session)):
+    """Validate a bearer token delivered in the URL fragment; never embed it in public HTML."""
+    check_csrf(request, csrf)
+    if not settings.bootstrap_token or not settings.bootstrap_email or db.scalar(select(func.count()).select_from(User)):
+        raise HTTPException(404)
+    ip = request.client.host if request.client else 'unknown'
+    fingerprint = hashlib.sha256(('bootstrap:' + ip).encode()).hexdigest()
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    failures = db.scalar(select(func.count()).select_from(AuthAttempt).where(
+        AuthAttempt.email_hash == fingerprint, AuthAttempt.success == False,
+        AuthAttempt.occurred_at >= cutoff)) or 0
+    if failures >= 8:
+        return bootstrap_headers(JSONResponse({'ok': False, 'message': 'Demasiados intentos. Vuelve a intentar más tarde.'}, status_code=429))
+    valid = len(token) >= 32 and secrets.compare_digest(token, settings.bootstrap_token)
+    db.add(AuthAttempt(email_hash=fingerprint, success=valid))
+    db.commit()
+    if not valid:
+        return bootstrap_headers(JSONResponse({'ok': False, 'message': 'El enlace de activación no es válido.'}, status_code=403))
+    request.session['bootstrap_verified_at'] = int(datetime.now(timezone.utc).timestamp())
+    request.session['bootstrap_signature'] = hashlib.sha256(settings.bootstrap_token.encode()).hexdigest()
+    return bootstrap_headers(JSONResponse({'ok': True}))
+
 
 @app.post('/configuracion-inicial')
-def initial_setup_post(request:Request,csrf:str=Form(...),code:str=Form(...),
-                       name:str=Form(...),email:str=Form(...),password:str=Form(...),
-                       confirm_password:str=Form(...),db:Session=Depends(db_session)):
-    check_csrf(request,csrf)
-    if not settings.bootstrap_token or not settings.bootstrap_email:raise HTTPException(404)
+def initial_setup_post(request: Request, csrf: str = Form(...),
+                       name: str = Form(...), email: str = Form(...), password: str = Form(...),
+                       confirm_password: str = Form(...), db: Session = Depends(db_session)):
+    check_csrf(request, csrf)
+    if not settings.bootstrap_token or not settings.bootstrap_email:
+        raise HTTPException(404)
+    if not bootstrap_authorized(request):
+        raise HTTPException(403, 'Abre el enlace privado de activación para configurar el administrador.')
     # Impedir creación simultánea del primer administrador.
-    if db.bind.dialect.name=='postgresql':db.execute(text('SELECT pg_advisory_xact_lock(731020)'))
-    if db.scalar(select(func.count()).select_from(User)):raise HTTPException(404)
-    ip=request.client.host if request.client else 'unknown'
-    key=hashlib.sha256(('bootstrap:'+ip).encode()).hexdigest()
-    cutoff=datetime.now(timezone.utc)-timedelta(minutes=15)
-    failed=db.scalar(select(func.count()).select_from(AuthAttempt).where(
-         AuthAttempt.email_hash==key,AuthAttempt.success==False,AuthAttempt.occurred_at>=cutoff)) or 0
-    if failed>=8:raise HTTPException(429,'Demasiados intentos de configuración.')
-    valid=(secrets.compare_digest(code,settings.bootstrap_token)
-           and email.strip().lower()==settings.bootstrap_email
-           and len(password)>=12 and password==confirm_password and bool(name.strip()))
-    db.add(AuthAttempt(email_hash=key,success=valid))
+    if db.bind.dialect.name == 'postgresql':
+        db.execute(text('SELECT pg_advisory_xact_lock(731020)'))
+    if db.scalar(select(func.count()).select_from(User)):
+        raise HTTPException(404)
+    valid = (email.strip().lower() == settings.bootstrap_email
+             and len(password) >= 12 and password == confirm_password and bool(name.strip()))
     if not valid:
-        db.commit()
-        return templates.TemplateResponse(request,'setup.html',ctx(request,db,
-          error='Código, correo o contraseña incorrectos.',admin_email=settings.bootstrap_email),status_code=400)
-    db.add(User(name=name.strip()[:160],email=settings.bootstrap_email,password_hash=ph.hash(password),
-                role='admin',active=True,form_permissions=list(PERMISSIONS)))
-    audit(db,'configuracion-inicial','CREAR_ADMIN',settings.bootstrap_email)
+        return bootstrap_headers(templates.TemplateResponse(request, 'setup.html', ctx(request, db,
+            error='Verifica el correo autorizado y que las contraseñas coincidan y tengan al menos 12 caracteres.',
+            admin_email=settings.bootstrap_email, authorized=True), status_code=400))
+    db.add(User(name=name.strip()[:160], email=settings.bootstrap_email, password_hash=ph.hash(password),
+                role='admin', active=True, form_permissions=list(PERMISSIONS)))
+    audit(db, 'configuracion-inicial', 'CREAR_ADMIN', settings.bootstrap_email)
     db.commit()
+    request.session.clear()
     return redirect('/ingresar?configurado=1')
+
 
 @app.get('/activar/{token}')
 def activation_page(request:Request,token:str,db:Session=Depends(db_session)):
@@ -199,7 +245,7 @@ def index(request:Request):
 @app.get('/ingresar')
 def login_page(request:Request,db:Session=Depends(db_session)):
     if current_user(request,db):return redirect('/panel')
-    return render(request,db,'login.html',error=None,setup_available=bool(settings.bootstrap_token and settings.bootstrap_email and not db.scalar(select(func.count()).select_from(User))))
+    return render(request,db,'login.html',error=None,setup_available=bool(bootstrap_authorized(request) and settings.bootstrap_email and not db.scalar(select(func.count()).select_from(User))))
 
 @app.post('/ingresar')
 def login(request:Request,email:str=Form(...),password:str=Form(...),csrf:str=Form(...),db:Session=Depends(db_session)):

@@ -10,7 +10,7 @@
 
 ## Primera configuración desde el navegador
 
-1. En Railway, configurar las variables `BOOTSTRAP_EMAIL` (correo único del administrador) y `BOOTSTRAP_TOKEN` (código criptográficamente aleatorio, conocido solo por el administrador).
+1. En Railway, configurar las variables `BOOTSTRAP_EMAIL` (correo único del administrador) y `BOOTSTRAP_TOKEN` (secreto criptográficamente aleatorio, integrado exclusivamente en el enlace privado).
 2. Abrir la ruta `/configuracion-inicial` con HTTPS e ingresar nombre, correo autorizado, código y contraseña fuerte de 12 o más caracteres.
 3. El sistema impide repetir la operación cuando ya existe la primera cuenta. No se cargan contraseñas por la consola.
 4. Iniciar sesión en `/ingresar`. Desde **Usuarios y permisos**, crear usuarios introduciendo **nombre, correo y casillas para los cuatro formularios** y herramientas adicionales.

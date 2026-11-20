@@ -1,8 +1,0 @@
-{% extends 'base.html' %}{% block title %}Perfil{% endblock %}{% block content %}
-<div class="pagehead"><div><div class="eyebrow">SEGURIDAD PERSONAL</div><h1>Mi contraseña</h1><p>{{ user.name }} · {{ user.email }}</p></div></div>
-{% if error %}<div class="alert error">{{ error }}</div>{% endif %}{% if message %}<div class="hint">{{ message }}</div>{% endif %}
-<form class="panel narrow" method="post" action="/perfil"><input type="hidden" name="csrf" value="{{ csrf }}"/>
-<div class="field"><label>Contraseña actual</label><input type="password" name="old_password" required autocomplete="current-password"/></div>
-<div class="field"><label>Nueva contraseña (mínimo 12 caracteres)</label><input type="password" name="new_password" minlength="12" required autocomplete="new-password"/></div>
-<div class="field"><label>Confirmar nueva contraseña</label><input type="password" name="confirm_password" minlength="12" required autocomplete="new-password"/></div>
-<button class="btn primary" type="submit">Actualizar contraseña</button></form>{% endblock %}

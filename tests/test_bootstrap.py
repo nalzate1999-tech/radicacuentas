@@ -30,19 +30,35 @@ def csrf(html):
 c=TestClient(app,base_url='http://testserver',follow_redirects=False)
 page=c.get('/configuracion-inicial')
 assert page.status_code==200,page.text[:200]
+assert 'Código único' not in page.text
+assert 'name="code"' not in page.text
+assert 'name="password"' not in page.text  # Formulario de creación cerrado sin enlace.
 data={'csrf':csrf(page.text),'name':'Administrador Principal',
-      'email':'admin-setup@example.org','code':'incorrecto',
+      'email':'admin-setup@example.org',
       'password':'PasswordAdmin-2026!','confirm_password':'PasswordAdmin-2026!'}
-assert c.post('/configuracion-inicial',data=data).status_code==400
-data['code']='test-only-a-unique-secret-that-must-never-be-published'
+assert c.post('/configuracion-inicial',data=data).status_code==403
+assert c.post('/configuracion-inicial/validar',data={'csrf':csrf(page.text),'token':'incorrecto'}).status_code==403
+assert c.post('/configuracion-inicial',data=data).status_code==403
+activation=c.post('/configuracion-inicial/validar',data={'csrf':csrf(page.text),
+   'token':'test-only-a-unique-secret-that-must-never-be-published'})
+assert activation.status_code==200,activation.text
+assert activation.json()['ok'] is True
+page=c.get('/configuracion-inicial')
+assert page.status_code==200
+assert 'name="password"' in page.text
+assert 'name="code"' not in page.text
+assert 'Código único' not in page.text
+data['csrf']=csrf(page.text)
 created=c.post('/configuracion-inicial',data=data)
-assert created.status_code==303
+assert created.status_code==303,created.text[:400]
 assert created.headers['location']=='/ingresar?configurado=1'
 with SessionLocal() as db:
     u=db.scalar(select(User).where(User.email=='admin-setup@example.org'))
     assert u.role=='admin' and u.active
 assert c.get('/configuracion-inicial').status_code==404
-assert c.post('/configuracion-inicial',data=data).status_code==404
+assert c.post('/configuracion-inicial',data=data).status_code in (403, 404)
+assert c.post('/configuracion-inicial/validar',data={'csrf':data['csrf'],
+    'token':'test-only-a-unique-secret-that-must-never-be-published'}).status_code in (403, 404)
 login_page=c.get('/ingresar')
 assert c.post('/ingresar',data={'csrf':csrf(login_page.text),
       'email':'admin-setup@example.org','password':'PasswordAdmin-2026!'}).status_code==303
