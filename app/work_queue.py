@@ -4,7 +4,7 @@ User assignments are based on names/emails present in legacy case fields.
 They are discovery aids, not record-level authorization rules.
 """
 from sqlalchemy import and_, exists, func, or_, select
-from .models import Case, Subtask
+from .models import Case, Subtask, CaseAssignment
 from .services import normalize
 
 ARCHIVED = ('CERRADA', 'CERRADO', 'PAGADA', 'PAGADO')
@@ -49,24 +49,13 @@ def workflow_condition(key):
     raise ValueError('Tipo de gestion no reconocido.')
 
 
-def assignment_condition(user):
-    """Exact case-insensitive name/email; does not infer ownership from a shared role."""
-    name = (user.name or '').strip().casefold()
-    email = (user.email or '').strip().casefold()
-    identifiers = sorted({v for v in (name, email) if v})
-    if not identifiers:
-        return Case.id_caso.is_(None)
-    names = (Case.followup_assignee, Case.reviewer, Case.supervisor_name,
-             Case.current_owner, Case.sent_by)
-    cols = [func.lower(func.trim(col)).in_(identifiers) for col in names]
-    for email_col in (Case.supervisor_email,):
-        if email:
-            cols.append(func.lower(func.trim(email_col)) == email)
-    cols.append(exists(select(Subtask.id).where(
-        Subtask.case_id == Case.id_caso,
-        func.lower(func.trim(Subtask.responsible)).in_(identifiers),
-    )))
-    return or_(*cols)
+def assignment_condition(user, workflows):
+    """Solo asignaciones normalizadas, nunca coincidencias difusas en bandeja."""
+    return exists(select(CaseAssignment.id).where(
+        CaseAssignment.case_id == Case.id_caso,
+        CaseAssignment.user_id == user.id,
+        CaseAssignment.workflow.in_(workflows),
+    ))
 
 
 def queue_query(perms, user, workflow='', scope='mios'):
@@ -82,7 +71,7 @@ def queue_query(perms, user, workflow='', scope='mios'):
         or_(*conditions),
     )
     if scope == 'mios':
-        query = query.where(assignment_condition(user))
+        query = query.where(assignment_condition(user, [workflow] if workflow else allowed))
     elif scope != 'equipo':
         raise ValueError('Vista de bandeja no reconocida.')
     return query
