@@ -86,7 +86,7 @@ def test_roles():
     assert c.get('/casos').status_code==200
     assert c.get('/usuarios').status_code==403
     assert c.get('/casos/nuevo').status_code==403
-    assert c.get('/administracion').status_code==403
+    assert c.get('/administracion').status_code==404
 
 
 def test_invitation_activation_and_form_permissions():
@@ -219,3 +219,68 @@ def test_global_search_assignees_status_and_responsive_view():
         done=db.get(Case,closed_id)
         with pytest.raises(BusinessError,match='cerrado'):
             apply_followup(db,done,'Enviado a revisor','No permitido','qa@example.org')
+
+
+def test_retired_modules_not_accessible():
+    c=client_as('qa@example.org')
+    page=c.get('/panel')
+    assert 'Cómo funciona el proceso' not in page.text
+    assert 'Migración histórica' not in page.text
+    assert c.get('/proceso').status_code==404
+    assert c.get('/administracion').status_code==404
+    assert c.post('/administracion/importar').status_code==404
+
+
+def test_sla_filter_and_first_record_metrics():
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    from app.case_metrics import case_age_info
+    now=datetime.now(ZoneInfo('America/Bogota'))
+    today=now.date()
+    unique=uuid.uuid4().hex[:9]
+    entries=[
+        ('ATRASADO',today-timedelta(days=2),'RECIBIDA'),
+        ('HOY',today,'RECIBIDA'),
+        ('MANANA',today+timedelta(days=1),'RECIBIDA'),
+        ('ENPLAZO',today+timedelta(days=4),'RECIBIDA'),
+        ('SINPLAZO',None,'RECIBIDA'),
+        ('CERRADO',today-timedelta(days=3),'CERRADA'),
+    ]
+    with SessionLocal.begin() as db:
+        for title,due,status in entries:
+            started=now-timedelta(days=10)
+            db.add(Case(
+                id_caso=f'SLA-{unique}-{title}',source='web',
+                contractor_name=f'SLA-TEST-{unique}',
+                registered_at=started+timedelta(days=1),
+                received_at=started,
+                sla_due=due,current_status=status,
+                finance_closed_at=(today-timedelta(days=7) if status=='CERRADA' else None),
+            ))
+    c=client_as('qa@example.org')
+    for key,expected,not_expected in [
+        ('vencido',['ATRASADO'],['CERRADO','HOY','ENPLAZO']),
+        ('por_vencer',['HOY','MANANA'],['ATRASADO','ENPLAZO']),
+        ('en_plazo',['ENPLAZO'],['ATRASADO','MANANA']),
+        ('sin_sla',['SINPLAZO','CERRADO'],['ATRASADO','ENPLAZO']),
+    ]:
+        p=c.get('/casos',params={'q':unique,'sla':key})
+        assert p.status_code==200,p.text[:300]
+        for name in expected:
+            assert f'SLA-{unique}-{name}' in p.text,(key,name)
+        for name in not_expected:
+            assert f'SLA-{unique}-{name}' not in p.text,(key,name)
+        assert 'Días en proceso' in p.text
+        assert 'Primer registro' in p.text
+        assert 'name="sla"' in p.text
+    # Invalid SLA values are rejected rather than interpolated into SQL.
+    assert c.get('/casos',params={'sla':'unexpected'}).status_code==400
+    closed_id=f'SLA-{unique}-CERRADO'
+    detail=c.get('/casos/'+closed_id)
+    assert detail.status_code==200
+    assert 'Duración hasta el cierre' in detail.text
+    with SessionLocal() as db:
+        closed=db.get(Case,closed_id)
+        age=case_age_info(closed,today=today)
+        assert age['duration_days']==3
+        assert age['duration_note']=='Hasta el cierre registrado'
