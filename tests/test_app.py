@@ -339,6 +339,8 @@ def test_personal_queue_team_search_and_one_click_report():
                         requires_reviewer=True,
                         registered_at=datetime.now(timezone.utc),
                         sla_due=datetime.now(timezone.utc).date()+timedelta(days=1)))
+        from app.identity import rebuild_assignments
+        rebuild_assignments(db)
     person=client_as(email)
     mine=person.get('/bandeja')
     assert mine.status_code==200,mine.text[:500]
@@ -396,3 +398,64 @@ def test_percentage_dashboard_denominators_and_radication_aggregation():
     assert 'Radicacion registrada' in report.text
     homepage=admin.get('/panel')
     assert 'Mi bandeja de trabajo' in homepage.text
+
+
+def test_new_identity_links_cases_and_resolves_ambiguous_names():
+    from datetime import datetime, timezone
+    from app.models import CaseAssignment, UserAlias
+    from app.identity import identity_key
+    key=uuid.uuid4().hex[:9]
+    firstname='Brian'+key
+    fullname=firstname+' Pérez Montoya'
+    email='brian-'+key+'@example.org'
+    ids=[f'QA-ID-{key}-{n}' for n in range(3)]
+    with SessionLocal.begin() as db:
+        for cid,who in zip(ids,[fullname,'Bryan '+key,firstname]):
+            db.add(Case(id_caso=cid,source='import',reviewer=who,current_owner='Revisor',
+                        current_status='EN_PRIMERA_REVISION',requires_reviewer=True,
+                        registered_at=datetime.now(timezone.utc)))
+    admin=client_as('qa@example.org')
+    page=admin.get('/usuarios')
+    created=admin.post('/usuarios',data={'csrf':token(page.text),'name':fullname,
+        'email':email,'aliases':'Bryan '+key+'; '+firstname+' Pérez',
+        'permissions':['revision','casos']})
+    assert created.status_code==200 and 'INVITACIÓN GENERADA' in created.text
+    with SessionLocal() as db:
+        user=db.scalar(select(User).where(User.email==email));uid=user.id
+        linked=set(db.scalars(select(CaseAssignment.case_id).where(
+            CaseAssignment.user_id==uid)).all())
+        assert set(ids).issubset(linked)
+        assert db.scalar(select(UserAlias.id).where(UserAlias.user_id==uid)) is not None
+    page=admin.get('/usuarios')
+    created2=admin.post('/usuarios',data={'csrf':token(page.text),
+        'name':firstname+' Ruiz','email':'other-'+email,
+        'permissions':['revision','casos']})
+    assert created2.status_code==200
+    with SessionLocal() as db:
+        assert db.scalar(select(CaseAssignment.id).where(CaseAssignment.case_id==ids[2])) is None
+        assert db.scalar(select(CaseAssignment.id).where(
+            CaseAssignment.case_id==ids[0],CaseAssignment.user_id==uid)) is not None
+    page=admin.get('/usuarios')
+    assigned=admin.post(f'/usuarios/{uid}/asignar',data={
+        'csrf':token(page.text),'case_id':ids[2],'workflow':'revision'})
+    assert assigned.status_code==200
+    with SessionLocal() as db:
+        link=db.scalar(select(CaseAssignment).where(CaseAssignment.case_id==ids[2]))
+        assert link is not None and link.user_id==uid and link.source=='manual'
+    assert identity_key(' BRIÁN  Pérez ') == identity_key('brian perez')
+
+
+def test_identity_alias_collision_rejected():
+    key=uuid.uuid4().hex[:9]
+    with SessionLocal.begin() as db:
+        db.add(User(name='Persona '+key,email='identity'+key+'@example.org',
+                    password_hash=ph.hash('Contraseña-Muy-Segura-2026!'),
+                    role='consulta',active=True,form_permissions=['revision','casos']))
+    with SessionLocal() as db:
+        user=db.scalar(select(User).where(User.email=='identity'+key+'@example.org'))
+        uid=user.id
+    admin=client_as('qa@example.org')
+    page=admin.get('/usuarios')
+    result=admin.post(f'/usuarios/{uid}/identidad',data={'csrf':token(page.text),
+        'name':'Persona '+key,'aliases':'Administrador QA'})
+    assert result.status_code==400
