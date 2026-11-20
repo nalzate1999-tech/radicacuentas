@@ -145,3 +145,17 @@
 .identity-editor .btn{justify-self:start}
 .identity-case-count{color:#3d5cbd!important;font-weight:800;margin-top:5px!important}
 @media(max-width:650px){.identity-inline-fields{grid-template-columns:1fr}}
+
+
+/* Eliminación de cuentas: acción irreversible y deliberadamente separada */
+.user-delete{margin:12px 0 0;border:1px solid #f2d2d7;background:#fffafb;border-radius:14px}
+.user-delete summary{display:flex;align-items:center;gap:8px;padding:12px 14px;cursor:pointer;color:#aa3449;font-size:12px;font-weight:800}
+.user-delete summary .icon{width:16px;height:16px}
+.user-delete[open] summary{border-bottom:1px solid #f4dfe3}
+.user-delete form{padding:14px;display:grid;gap:10px}
+.user-delete label{font-size:11px;font-weight:800;color:#793946}
+.user-delete input{display:block;box-sizing:border-box;width:100%;min-width:0;padding:11px 12px;border:1px solid #e4c4cc;border-radius:11px;background:#fff;font:inherit;color:#28365e}
+.user-delete input:focus{outline:2px solid #c34a5b;outline-offset:1px}
+.user-delete .btn.danger{background:#b9374c;color:#fff;border:1px solid #b9374c;justify-self:start}
+.user-delete .btn.danger:hover{background:#97273b}
+@media(max-width:650px){.user-delete .btn.danger{width:100%}}
