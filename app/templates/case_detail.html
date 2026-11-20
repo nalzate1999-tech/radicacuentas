@@ -1,5 +1,6 @@
 {% extends 'base.html' %}{% block title %}{{ case.id_caso }}{% endblock %}{% block content %}
 <div class="pagehead"><div><div class="eyebrow">EXPEDIENTE DEL CASO</div><h1>{{ case.id_caso }}</h1><p>{{ case.contractor_name }} · Contrato {{ case.contract_no }} · Período {{ case.period }}</p></div><a href="/casos" class="btn">← Casos</a></div>
+<section class="case-lifecycle" aria-label="Tiempo del expediente"><div class="case-lifecycle-stat"><span>Primer registro</span><strong>{{ age.first_display }}</strong><small>{{ age.first_note }}</small></div><div class="case-lifecycle-stat"><span>{{ 'Duración hasta el cierre' if age.closed else 'Días en proceso' }}</span><strong>{{ age.duration_display }}</strong><small>{{ age.duration_note }}</small></div><div class="case-lifecycle-stat"><span>Estado del SLA</span><strong>{{ 'En plazo' if sla_color(case)=='OK' else sla_color(case) }}</strong><small>{{ case.sla_due or 'Sin vencimiento activo' }}</small></div></section>
 {% if case.needs_reconciliation %}<div class="alert warn">El identificador original no estaba disponible. Esta fila histórica requiere conciliación antes de gestionarse.</div>{% endif %}
 <div class="action-strip"><span class="pill emph">{{ (case.current_status or 'Sin estado').replace('_',' ') }}</span>
 <span class="sla {{ 'danger' if sla_color(case)=='Vencido' else '' }}">SLA: {{ sla_color(case) }} {% if case.sla_due %}· {{ case.sla_due }}{% endif %}</span>
@@ -14,7 +15,7 @@
 <dt>Correo</dt><dd>{{ case.contractor_email or '—' }}</dd><dt>Teléfono</dt><dd>{{ case.contractor_phone or '—' }}</dd>
 <dt>Responsable</dt><dd>{{ case.current_owner or '—' }}</dd><dt>Seguimiento</dt><dd>{{ case.followup_assignee or '—' }}</dd>
 <dt>Revisor</dt><dd>{{ case.reviewer or '—' }}</dd><dt>Caso especial</dt><dd>{{ 'Sí' if case.special else 'No' }}</dd>
-<dt>Registrada</dt><dd>{{ case.registered_at or '—' }}</dd><dt>Cierre financiera</dt><dd>{{ case.finance_closed_at or '—' }}</dd>
+<dt>Primer registro</dt><dd>{{ age.first_display }} ({{ age.first_note }})</dd><dt>Cierre financiera</dt><dd>{{ case.finance_closed_at or '—' }}</dd>
 <dt>Soporte histórico</dt><dd class="wrap-anywhere">{{ case.support_link or 'No hay enlace histórico' }}</dd>
 </dl></section>
 <section class="panel"><h2>Revisiones paralelas</h2>{% for t in tasks %}
