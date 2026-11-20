@@ -284,3 +284,32 @@ def test_sla_filter_and_first_record_metrics():
         age=case_age_info(closed,today=today)
         assert age['duration_days']==3
         assert age['duration_note']=='Hasta el cierre registrado'
+
+
+def test_form_actions_are_consolidated_into_case_filters():
+    admin=client_as('qa@example.org')
+    home=admin.get('/panel')
+    assert home.status_code==200
+    assert '<strong>Expedientes y formularios</strong>' in home.text
+    assert 'href="/casos?accion=revision"' not in home.text
+    assert 'href="/casos?accion=seguimiento"' not in home.text
+    assert 'href="/casos?accion=juridica"' not in home.text
+    assert 'href="/casos/nuevo"' in home.text
+    listing=admin.get('/casos')
+    assert listing.status_code==200
+    assert 'name="accion"' in listing.text
+    assert 'id="case-action-input"' in listing.text
+    for action in ('revision','seguimiento','juridica'):
+        assert f'<option value="{action}"' in listing.text
+        result=admin.get('/casos',params={'accion':action})
+        assert result.status_code==200
+        assert f'<option value="{action}" selected' in result.text
+        assert 'href="/casos?accion=' not in result.text
+    clean=admin.get('/casos',params={'accion':'revision','q':'no-existe'})
+    assert 'href="/casos">Limpiar</a>' in clean.text
+    viewer=client_as('viewer@example.org')
+    page=viewer.get('/casos')
+    assert page.status_code==200
+    assert 'name="accion"' not in page.text
+    assert viewer.get('/casos',params={'accion':'revision'}).status_code==403
+    assert viewer.get('/casos/nuevo').status_code==403
