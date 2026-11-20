@@ -62,3 +62,15 @@
 @media(max-width:1250px){.case-filters,.case-filters:has(.case-view-filter){grid-template-columns:repeat(3,minmax(0,1fr))}.case-filters .case-search-actions{grid-column:1/-1}}
 @media(max-width:760px){.case-lifecycle{grid-template-columns:1fr 1fr;gap:9px}.case-lifecycle-stat{padding:14px}.case-lifecycle-stat strong{font-size:17px}.case-lifecycle-stat:last-child{grid-column:1/-1}.case-filters,.case-filters:has(.case-view-filter){grid-template-columns:repeat(2,minmax(0,1fr))}.case-mobile-age{padding-top:9px;border-top:1px solid #e9edf6}}
 @media(max-width:410px){.case-filters,.case-filters:has(.case-view-filter){grid-template-columns:1fr}.case-lifecycle{grid-template-columns:1fr}.case-lifecycle-stat:last-child{grid-column:auto}}
+
+/* Las acciones de los formularios se gestionan desde un unico filtro. */
+.case-action-filter select{background:#f6f8ff;border-color:#d9e2ff;color:#3549a3;font-weight:700}
+@media (min-width:1251px){.case-filters,.case-filters:has(.case-view-filter){grid-template-columns:minmax(210px,2fr) repeat(5,minmax(108px,1fr))}}
+@media (max-width:760px){.case-filters .case-action-filter{grid-column:1/-1}}
+/* Desktop: controles amplios y legibles, sin truncar los nombres del filtro. */
+@media (min-width:1251px){
+  .case-filters,.case-filters:has(.case-view-filter){grid-template-columns:repeat(4,minmax(0,1fr))}
+  .case-filters .case-query{grid-column:span 2}
+  .case-filters .case-search-actions{grid-column:auto;align-self:end;justify-content:flex-start;padding:0}
+  .case-filters .case-search-actions .btn{min-width:89px}
+}
