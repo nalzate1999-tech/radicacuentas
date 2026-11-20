@@ -4,7 +4,7 @@
 <meta name="theme-color" content="#f6f7fc"/><meta name="robots" content="noindex,nofollow"/>
 <title>{% block title %}Inicio{% endblock %} | RadicaCuentas</title>
 <style>.svg-sprites{position:absolute;width:0;height:0;overflow:hidden}.icon{display:inline-block;width:20px;height:20px;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}</style>
-<link rel="stylesheet" href="/static/style.css?v=20261120-sla-lifecycle"/>
+<link rel="stylesheet" href="/static/style.css?v=20261120-consolidated-forms"/>
 </head><body>
 <svg xmlns="http://www.w3.org/2000/svg" class="svg-sprites" aria-hidden="true">
 <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.4"/><rect x="14" y="3" width="7" height="7" rx="1.4"/><rect x="3" y="14" width="7" height="7" rx="1.4"/><rect x="14" y="14" width="7" height="7" rx="1.4"/></symbol>
@@ -36,9 +36,6 @@
 <a href="/panel" class="nav-item {% if request.url.path=='/panel' %}active{% endif %}"><svg class="icon"><use href="#i-grid"/></svg><span>Mi inicio</span></a>
 {% if can('casos') %}<a href="/casos" class="nav-item {% if request.url.path=='/casos' or request.url.path.startswith('/casos/') %}active{% endif %}"><svg class="icon"><use href="#i-list"/></svg><span>Expedientes</span></a>{% endif %}
 {% if can('registro') %}<a href="/casos/nuevo" class="nav-item {% if request.url.path=='/casos/nuevo' %}active{% endif %}"><svg class="icon"><use href="#i-plus"/></svg><span>Registrar cuenta</span></a>{% endif %}
-{% if can('revision') %}<a href="/casos?accion=revision" class="nav-item"><svg class="icon"><use href="#i-review"/></svg><span>Revisión supervisor</span></a>{% endif %}
-{% if can('seguimiento') %}<a href="/casos?accion=seguimiento" class="nav-item"><svg class="icon"><use href="#i-route"/></svg><span>Seguimiento</span></a>{% endif %}
-{% if can('juridica') %}<a href="/casos?accion=juridica" class="nav-item"><svg class="icon"><use href="#i-scale"/></svg><span>Jurídica / técnica</span></a>{% endif %}
 {% if can('radicacion') %}<a href="/radicacion" class="nav-item {% if request.url.path.startswith('/radicacion') %}active{% endif %}"><svg class="icon"><use href="#i-calendar"/></svg><span>Radicación mensual</span></a>{% endif %}
 {% if can('informes') %}<a href="/informes" class="nav-item {% if request.url.path.startswith('/informes') %}active{% endif %}"><svg class="icon"><use href="#i-chart"/></svg><span>Indicadores</span></a>{% endif %}
 </nav>
