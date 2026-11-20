@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% block title %}Mi bandeja{% endblock %}
+{% block content %}
+<div class="pagehead inbox-head">
+ <div><div class="eyebrow">GESTION DEL EQUIPO</div><h1>Mi bandeja de trabajo</h1>
+ <p>Encuentra el expediente, revisa la etapa y registra la novedad en el formulario autorizado.</p></div>
+ <a class="btn" href="/casos">Todos los expedientes</a>
+</div>
+<section class="panel inbox-intro">
+ <div class="inbox-intro-icon"><svg class="icon"><use href="#i-review"/></svg></div>
+ <div><strong>{{ total }} casos para gestionar</strong>
+ <p>{{ 'Coinciden con tu nombre o correo registrado.' if vista=='mios' else 'Casos pendientes del equipo, segun los formularios que tienes autorizados.' }} Los finalizados no aparecen aqui.</p></div>
+</section>
+<section class="panel case-search-panel">
+ <form action="/bandeja" method="get" class="filters inbox-filters" role="search" aria-label="Buscar en la bandeja">
+  <div class="inbox-query"><label for="inbox-q">Buscar expediente</label>
+   <div class="case-search-input"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+   <input id="inbox-q" type="search" name="q" maxlength="140" value="{{ q }}" autocomplete="off" placeholder="Contratista, contrato, documento o persona" enterkeyhint="search"/></div>
+  </div>
+  <div><label for="inbox-view">Bandeja</label><select id="inbox-view" name="vista">
+   <option value="mios" {% if vista=='mios' %}selected{% endif %}>Asignados a mi</option>
+   <option value="equipo" {% if vista=='equipo' %}selected{% endif %}>Pendientes del equipo</option>
+  </select></div>
+  <div><label for="inbox-form">Formulario</label><select id="inbox-form" name="gestion">
+   <option value="">Todos mis formularios</option>
+   {% for key in allowed_workflows %}<option value="{{ key }}" {% if gestion==key %}selected{% endif %}>{{ workflow_labels[key] }}</option>{% endfor %}
+  </select></div>
+  <div><label for="inbox-sla">SLA</label><select id="inbox-sla" name="sla">
+   <option value="">Todos</option>
+   <option value="vencido" {% if sla=='vencido' %}selected{% endif %}>Vencidos</option>
+   <option value="por_vencer" {% if sla=='por_vencer' %}selected{% endif %}>Por vencer</option>
+   <option value="en_plazo" {% if sla=='en_plazo' %}selected{% endif %}>En plazo</option>
+   <option value="sin_sla" {% if sla=='sin_sla' %}selected{% endif %}>Sin SLA</option>
+  </select></div>
+  <div class="inbox-filter-buttons"><button class="btn primary" type="submit">Buscar</button><a class="btn" href="/bandeja">Limpiar</a></div>
+ </form>
+</section>
+<section class="panel inbox-results">
+ <div class="case-results-heading"><strong>{{ total }} resultados</strong><span>Primero los vencidos y proximos a vencer</span></div>
+ <div class="inbox-list">
+ {% for c in rows %}
+ <article class="inbox-case">
+  <div class="inbox-case-main"><div class="inbox-case-top"><a class="inbox-case-id" href="/casos/{{ c.id_caso }}">{{ c.id_caso }}</a><span class="pill">{{ (c.current_status or 'Sin estado').replace('_',' ') }}</span></div>
+   <h3>{{ c.contractor_name or 'Sin nombre de contratista' }}</h3>
+   <div class="inbox-case-meta"><span><strong>Contrato:</strong> {{ c.contract_no or 'No registrado' }}</span><span><strong>Gestion:</strong> {{ c.current_owner or 'Sin asignar' }}</span>
+    <span><strong>Seguimiento:</strong> {{ c.followup_assignee or 'Sin asignar' }}</span><span><strong>Primer registro:</strong> {{ case_age[c.id_caso].first_display }}</span></div>
+   {% if c.last_observation %}<p class="inbox-last-note"><strong>Ultima novedad:</strong> {{ c.last_observation|truncate(165) }}</p>{% endif %}
+  </div>
+  <div class="inbox-case-side">
+   <span class="sla {{ 'danger' if sla_color(c)=='Vencido' else ('warning' if sla_color(c)=='Por vencer' else '') }}">{{ sla_color(c) }}</span>
+   <small>{{ c.sla_due or 'Sin fecha limite' }}</small>
+   {% if actions[c.id_caso] %}<a class="btn primary" href="/casos/{{ c.id_caso }}/{{ actions[c.id_caso] }}">Registrar novedad <svg class="icon"><use href="#i-arrow"/></svg></a>{% else %}<a class="btn" href="/casos/{{ c.id_caso }}">Consultar expediente</a>{% endif %}
+  </div>
+ </article>
+ {% else %}
+ <div class="inbox-zero"><svg class="icon"><use href="#i-search"/></svg>
+ <h3>No hay expedientes en esta vista</h3><p>{% if vista=='mios' %}Los registros historicos pueden tener el responsable escrito de otra forma. Consulta la bandeja del equipo para encontrarlos.{% else %}Prueba otro nombre, periodo o estado SLA.{% endif %}</p>
+ {% if vista=='mios' %}<a class="btn primary" href="/bandeja?vista=equipo">Ver pendientes del equipo</a>{% endif %}</div>
+ {% endfor %}
+ </div>
+ <div class="pagination case-pagination"><span>Pagina {{ page }} de {{ pages }}</span><div>
+  {% if page>1 %}<a class="btn" href="?q={{ q|urlencode }}&vista={{ vista|urlencode }}&gestion={{ gestion|urlencode }}&sla={{ sla|urlencode }}&page={{ page-1 }}">Anterior</a>{% endif %}
+  {% if page<pages %}<a class="btn" href="?q={{ q|urlencode }}&vista={{ vista|urlencode }}&gestion={{ gestion|urlencode }}&sla={{ sla|urlencode }}&page={{ page+1 }}">Siguiente</a>{% endif %}
+ </div></div>
+</section>
+<p class="fine">La asignacion personal se reconoce por coincidencia de nombre o correo; los permisos para registrar novedades se comprueban en el servidor.</p>
+{% endblock %}
