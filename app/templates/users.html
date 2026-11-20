@@ -2,6 +2,7 @@
 <div class="pagehead"><div><div class="eyebrow">ADMINISTRACIÓN DE ACCESOS</div><h1>Personas y permisos</h1><p>Controla qué ve y qué puede hacer cada persona, por correo electrónico y por formulario.</p></div><span class="header-counter"><svg class="icon"><use href="#i-users"/></svg> {{ users|length }} cuentas</span></div>
 {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
 {% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}
+{% if request.query_params.get('eliminado') %}<div class="alert success">El usuario fue eliminado. Los expedientes y la auditoría se conservaron.</div>{% endif %}
 {% if invitation %}<section class="panel invitation-result"><div class="invitation-icon"><svg class="icon"><use href="#i-check"/></svg></div><div class="invitation-main"><div class="eyebrow">INVITACIÓN GENERADA</div><h2>La invitación de {{ invitation.email }} está lista</h2><p>Comparte este enlace de forma privada. La persona podrá definir su propia contraseña. El enlace vence en 72 horas y solo funciona una vez.</p><div class="invite-copy"><input aria-label="Enlace de invitación" value="{{ invitation.url }}" id="invitation-url" readonly/><button class="btn primary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('invitation-url').value).then(()=>{this.textContent='Copiado'})">Copiar enlace</button></div><p class="fine">Por seguridad, la invitación no se vuelve a mostrar después de salir de esta pantalla. Puedes generar otra desde el listado.</p></div></section>{% endif %}
 <div class="users-layout">
 <section class="panel user-create-panel"><div class="panel-title-with-icon"><span class="panel-icon"><svg class="icon"><use href="#i-plus"/></svg></span><div><div class="eyebrow">NUEVA PERSONA</div><h2>Crear acceso</h2><p>Solo necesitas su nombre, correo y los formularios permitidos.</p></div></div>
@@ -40,6 +41,16 @@
 <details class="user-config"><summary><svg class="icon"><use href="#i-settings"/></svg> Administrar permisos</summary>
 <form method="post" action="/usuarios/{{ item.id }}/permisos"><input type="hidden" name="csrf" value="{{ csrf }}"/><div class="edit-permission-grid">{% for code,label in permission_labels.items() %}<label class="edit-permission"><input type="checkbox" name="permissions" value="{{ code }}" {% if code in (item.form_permissions or []) %}checked{% endif %}/> {{ label }}</label>{% endfor %}</div><button type="submit" class="btn primary tiny">Guardar cambios</button></form>
 <div class="user-record-actions"><form method="post" action="/usuarios/{{ item.id }}/estado"><input type="hidden" name="csrf" value="{{ csrf }}"/><button class="btn tiny" type="submit">{{ 'Desactivar acceso' if item.active else 'Activar acceso' }}</button></form><form method="post" action="/usuarios/{{ item.id }}/invitacion" onsubmit="return confirm('Se bloqueará el acceso anterior hasta que la persona active una nueva contraseña. ¿Continuar?')"><input type="hidden" name="csrf" value="{{ csrf }}"/><button class="btn tiny" type="submit">Nueva invitación / restablecer clave</button></form></div>
+</details>
+<details class="user-delete">
+<summary><svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg> Eliminar usuario</summary>
+<form method="post" action="/usuarios/{{ item.id }}/eliminar" onsubmit="return confirm('Se eliminará definitivamente la cuenta seleccionada. Los expedientes y movimientos se conservarán. ¿Confirmas?')">
+<input type="hidden" name="csrf" value="{{ csrf }}"/>
+<p class="fine">Se eliminarán el acceso, la invitación pendiente, sus alias y las asignaciones personales. Los expedientes y la auditoría se conservan.</p>
+<label for="delete-email-{{ item.id }}">Confirma escribiendo el correo de {{ item.name }}</label>
+<input id="delete-email-{{ item.id }}" type="email" name="confirm_email" required autocomplete="off" maxlength="250" placeholder="{{ item.email }}" aria-label="Correo de confirmación para eliminar a {{ item.name }}"/>
+<button class="btn danger tiny" type="submit">Eliminar definitivamente esta cuenta</button>
+</form>
 </details>{% endif %}</article>{% else %}<div class="empty-state"><svg class="icon"><use href="#i-users"/></svg><b>No hay usuarios todavía</b><p>Agrega a tu primera persona en el formulario de la izquierda.</p></div>{% endfor %}
 </div></section>
 </div>{% endblock %}
