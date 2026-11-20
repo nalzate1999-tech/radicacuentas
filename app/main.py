@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request, Depends, Form, HTTPException, UploadFile, 
 from fastapi.responses import RedirectResponse, HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select, func, or_, and_, desc, text, case as sql_case
+from sqlalchemy import select, delete, func, or_, and_, desc, text, case as sql_case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
@@ -777,6 +777,47 @@ def reinvite(request:Request,uid:int,csrf:str=Form(...),db:Session=Depends(db_se
     audit(db,admin.email,'REINVITAR_USUARIO',target.email)
     db.commit()
     return render_users(request,db,invitation={'email':target.email,'url':invitation_url(code)})
+
+@app.post('/usuarios/{uid}/eliminar')
+def delete_user_account(request:Request,uid:int,csrf:str=Form(...),
+                        confirm_email:str=Form(...),db:Session=Depends(db_session)):
+    """Elimina una cuenta sin borrar casos ni movimientos históricos.
+
+    Requiere confirmación del correo, rol administrador y token CSRF. Se
+    conservan las novedades históricas; solo desaparecen las asociaciones
+    y los alias que daban acceso a la bandeja de la persona eliminada.
+    """
+    admin=require_user(request,db,['admin']);check_csrf(request,csrf)
+    target=db.get(User,uid)
+    if not target:
+        raise HTTPException(404,'El usuario no existe o ya fue eliminado.')
+    if target.id==admin.id or target.role=='admin':
+        return render_users(request,db,error='No se permite eliminar cuentas administradoras.',status_code=400)
+    if confirm_email.strip().casefold()!=target.email.casefold():
+        return render_users(request,db,error='El correo de confirmación no coincide con el usuario seleccionado.',status_code=400)
+
+    # Copiar detalles antes de eliminar la fila; los casos y eventos nunca
+    # se eliminan desde la administración de usuarios.
+    identity={'id':target.id,'name':target.name,'email':target.email,
+              'role':target.role,'active':target.active,
+              'permissions':list(target.form_permissions or [])}
+    assigned=db.scalar(select(func.count()).select_from(CaseAssignment)
+                       .where(CaseAssignment.user_id==uid)) or 0
+    aliases=db.scalar(select(func.count()).select_from(UserAlias)
+                      .where(UserAlias.user_id==uid)) or 0
+    try:
+        db.execute(delete(CaseAssignment).where(CaseAssignment.user_id==uid))
+        db.execute(delete(UserAlias).where(UserAlias.user_id==uid))
+        db.delete(target)
+        db.flush()
+        audit(db,admin.email,'ELIMINAR_USUARIO',identity['email'],
+              {'cuenta':identity,'vinculos_retirados':assigned,
+               'alias_retirados':aliases,'casos_eliminados':0})
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return render_users(request,db,error='No se pudo eliminar la cuenta. Verifique sus relaciones.',status_code=409)
+    return redirect('/usuarios?eliminado=1')
 
 @app.post('/usuarios/{uid}/estado')
 def toggle_user(request:Request,uid:int,csrf:str=Form(...),db:Session=Depends(db_session)):
