@@ -47,3 +47,18 @@
 @media(max-width:410px){.case-filters,.case-filters:has(.case-view-filter){grid-template-columns:1fr}.case-query,.case-search-actions,.case-view-filter{grid-column:1}.case-mobile-fields{gap:10px}.case-mobile-card h3{font-size:15px}.case-search-actions>.btn{width:100%}}
 
 @media(min-width:1251px){.case-filters,.case-filters:has(.case-view-filter){align-items:start}.case-search-actions{padding-top:20px}}
+
+/* Fecha inicial y antiguedad visibles en escritorio y celular */
+.case-lifecycle{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 19px}
+.case-lifecycle-stat{min-width:0;padding:17px 20px;border:1px solid #dce3f0;border-radius:16px;background:#fff;box-shadow:0 3px 14px rgba(31,50,105,.035)}
+.case-lifecycle-stat>span{display:block;color:#6c7894;font-size:11px;font-weight:750;margin:0 0 9px}
+.case-lifecycle-stat>strong{display:block;color:#25386e;font-size:21px;line-height:1.25;font-weight:800;overflow-wrap:anywhere}
+.case-lifecycle-stat>small{display:block;color:#8792aa;font-size:10px;line-height:1.45;margin-top:6px}
+.case-time-desktop strong,.case-time-desktop small{display:block;white-space:nowrap}
+.case-age-number{display:inline-flex;margin-top:7px;padding:4px 9px;border-radius:8px;background:#ecf0ff;color:#3d52a8;font-size:12px;font-weight:800}
+.case-mobile-age small{display:block;font-size:10px;color:#8a92a5;margin-top:3px}
+.case-filters,.case-filters:has(.case-view-filter){grid-template-columns:minmax(215px,2fr) repeat(4,minmax(110px,1fr));}
+.case-filters .case-search-actions{grid-column:1/-1;padding-top:0}
+@media(max-width:1250px){.case-filters,.case-filters:has(.case-view-filter){grid-template-columns:repeat(3,minmax(0,1fr))}.case-filters .case-search-actions{grid-column:1/-1}}
+@media(max-width:760px){.case-lifecycle{grid-template-columns:1fr 1fr;gap:9px}.case-lifecycle-stat{padding:14px}.case-lifecycle-stat strong{font-size:17px}.case-lifecycle-stat:last-child{grid-column:1/-1}.case-filters,.case-filters:has(.case-view-filter){grid-template-columns:repeat(2,minmax(0,1fr))}.case-mobile-age{padding-top:9px;border-top:1px solid #e9edf6}}
+@media(max-width:410px){.case-filters,.case-filters:has(.case-view-filter){grid-template-columns:1fr}.case-lifecycle{grid-template-columns:1fr}.case-lifecycle-stat:last-child{grid-column:auto}}
