@@ -22,11 +22,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .config import get_settings
 from .database import db_session, engine, SessionLocal
 from .models import (Base, User, Case, Event, Subtask, RadContract, RadMonth,
-                     ImportBatch, ImportIssue, Personnel, FormResponse, Audit, Notification, AuthAttempt)
+                     ImportBatch, ImportIssue, Personnel, FormResponse, Audit, Notification, AuthAttempt, UserAlias, CaseAssignment)
 from .services import (BOGOTA, FOLLOWUP_ACTIONS, REVIEW_ACTIONS, LEGAL_OUTCOMES,
                        REVIEWERS, PROVIDERS, SUBTASK_TYPES, BusinessError, create_case,
                        apply_followup, apply_review, apply_legal, sla_color, audit, utcnow, STOP_STATUSES)
 from .case_metrics import case_age_info
+from .identity import rebuild_assignments, replace_aliases, parse_aliases, WORKFLOWS
 from .analytics import report_data
 from .work_queue import (queue_query, authorized_workflows, recommended_workflow,
                          WORKFLOW_LABELS)
@@ -454,12 +455,21 @@ def cases(request:Request,q:str='',estado:str='',periodo:str='',accion:str='',
                   sla=sla,case_age=_case_age_map(db,rows),
                   statuses=statuses,sla_color=sla_color,archived_statuses=ARCHIVED_STATUSES)
 
+def registration_directory(db):
+    personnel=db.scalars(select(Personnel).order_by(Personnel.name)).all()
+    users=db.scalars(select(User).where(User.role != 'admin')).all()
+    followup_names={p.name for p in personnel} | {'Brayan'}
+    followup_names.update(u.name for u in users if 'seguimiento' in (u.form_permissions or []))
+    reviewer_names=set(REVIEWERS)
+    reviewer_names.update(u.name for u in users if 'revision' in (u.form_permissions or []))
+    return sorted(followup_names), sorted(reviewer_names)
+
+
 @app.get('/casos/nuevo')
 def register_form(request:Request,db:Session=Depends(db_session)):
     require_permission(request,db,'registro')
-    personnel=db.scalars(select(Personnel).order_by(Personnel.name)).all()
-    names=sorted(set([p.name for p in personnel]+['Brayan']))
-    return render(request,db,'register.html',assignees=names,reviewers=REVIEWERS,error=None,form={})
+    names,reviewers=registration_directory(db)
+    return render(request,db,'register.html',assignees=names,reviewers=reviewers,error=None,form={})
 
 @app.post('/casos/nuevo')
 def register(request:Request,csrf:str=Form(...),contractor_type:str=Form(...),
@@ -474,13 +484,15 @@ def register(request:Request,csrf:str=Form(...),contractor_type:str=Form(...),
     data['reviewer']=', '.join(reviewer)
     try:
         case=create_case(db,data,u.email)
+        db.flush()
+        rebuild_assignments(db, case_ids=[case.id_caso])
         db.commit()
         return redirect('/casos/'+quote(case.id_caso))
     except (BusinessError,IntegrityError) as e:
         db.rollback()
-        personnel=db.scalars(select(Personnel).order_by(Personnel.name)).all()
+        names,reviewers=registration_directory(db)
         return templates.TemplateResponse(request,'register.html',ctx(request,db,
-            assignees=sorted(set(p.name for p in personnel)|{'Brayan'}),reviewers=REVIEWERS,
+            assignees=names,reviewers=reviewers,
             error=str(e) if isinstance(e,BusinessError) else 'Registro duplicado o error de integridad.',
             form=data),status_code=400)
 
@@ -633,23 +645,32 @@ def export_csv(request:Request,db:Session=Depends(db_session)):
                  headers={'Content-Disposition':'attachment; filename="casos_radicacion.csv"',
                           'Cache-Control':'no-store'})
 
+def users_directory(db):
+    people=db.scalars(select(User).order_by(User.name)).all()
+    alias_map={u.id:[] for u in people}
+    for a in db.scalars(select(UserAlias).order_by(UserAlias.value)).all():
+        alias_map.setdefault(a.user_id,[]).append(a.value)
+    assigned=dict(db.execute(select(CaseAssignment.user_id,func.count(func.distinct(CaseAssignment.case_id)))
+             .join(Case,Case.id_caso==CaseAssignment.case_id)
+             .where(~Case.current_status.in_(ARCHIVED_STATUSES),Case.needs_reconciliation.is_not(True))
+             .group_by(CaseAssignment.user_id)).all())
+    return dict(users=people,alias_map=alias_map,assignment_counts=assigned)
+
 @app.get('/usuarios')
 def users_page(request:Request,db:Session=Depends(db_session)):
     require_user(request,db,['admin'])
-    return render(request,db,'users.html',users=db.scalars(select(User).order_by(User.name)).all(),
-                  error=None,invitation=None)
+    return render(request,db,'users.html',**users_directory(db),error=None,invitation=None,notice=None)
 
 
-def render_users(request,db,error=None,invitation=None,status_code=200):
+def render_users(request,db,error=None,invitation=None,notice=None,status_code=200):
     response=templates.TemplateResponse(request,'users.html',ctx(request,db,
-             users=db.scalars(select(User).order_by(User.name)).all(),
-             error=error,invitation=invitation),status_code=status_code)
+             **users_directory(db),error=error,invitation=invitation,notice=notice),status_code=status_code)
     response.headers['Cache-Control']='no-store'
     return response
 
 @app.post('/usuarios')
 def create_user(request:Request,csrf:str=Form(...),name:str=Form(...),email:str=Form(...),
-                permissions:list[str]=Form([]),db:Session=Depends(db_session)):
+                permissions:list[str]=Form([]),aliases:str=Form(''),db:Session=Depends(db_session)):
     admin=require_user(request,db,['admin']);check_csrf(request,csrf)
     email=email.strip().lower();name=name.strip()
     perms=sorted(set(permissions).intersection(PERMISSIONS))
@@ -664,10 +685,68 @@ def create_user(request:Request,csrf:str=Form(...),name:str=Form(...),email:str=
            role='consulta',active=False,form_permissions=perms,
            invite_token_hash=hashlib.sha256(code.encode()).hexdigest(),
            invite_expires_at=datetime.now(timezone.utc)+timedelta(hours=72))
-    db.add(u)
-    audit(db,admin.email,'INVITAR_USUARIO',email,{'permissions':perms})
+    try:
+        db.add(u);db.flush()
+        summary=replace_aliases(db,u,aliases)
+        audit(db,admin.email,'INVITAR_USUARIO',email,
+              {'permissions':perms,'associations':summary})
+        db.commit()
+    except (ValueError,IntegrityError) as exc:
+        db.rollback()
+        return render_users(request,db,error=(str(exc) if isinstance(exc,ValueError) else
+                            'No se pudieron registrar las identidades. Revise las coincidencias.'),status_code=400)
+    return render_users(request,db,invitation={'email':email,'url':invitation_url(code)},
+                        notice=f'Se asociaron {summary["assigned"]} gestiones por identidad. '
+                               f'Coincidencias ambiguas sin asignar: {summary["ambiguous"]}.')
+
+@app.post('/usuarios/{uid}/identidad')
+def update_user_identity(request:Request,uid:int,csrf:str=Form(...),
+                         name:str=Form(...),aliases:str=Form(''),
+                         db:Session=Depends(db_session)):
+    admin=require_user(request,db,['admin']);check_csrf(request,csrf)
+    person=db.get(User,uid)
+    if not person:raise HTTPException(404)
+    name=' '.join(name.split())
+    if len(name)<2 or len(name)>160:
+        return render_users(request,db,error='Ingrese un nombre de 2 a 160 caracteres.',status_code=400)
+    before=person.name
+    try:
+        person.name=name
+        summary=replace_aliases(db,person,aliases)
+        audit(db,admin.email,'IDENTIDAD_USUARIO',person.email,
+              {'antes':before,'despues':name,'aliases':parse_aliases(aliases),'asociaciones':summary})
+        db.commit()
+    except (ValueError,IntegrityError) as exc:
+        db.rollback()
+        return render_users(request,db,error=str(exc) if isinstance(exc,ValueError)
+                            else 'Los nombres alternativos entran en conflicto.',status_code=400)
+    return render_users(request,db,notice=f'Identidad actualizada. {summary["assigned"]} gestiones vinculadas; '
+                        f'{summary["ambiguous"]} coincidencias requieren revisión.')
+
+@app.post('/usuarios/{uid}/asignar')
+def assign_case_to_person(request:Request,uid:int,csrf:str=Form(...),case_id:str=Form(...),
+                          workflow:str=Form(...),db:Session=Depends(db_session)):
+    admin=require_user(request,db,['admin']);check_csrf(request,csrf)
+    person=db.get(User,uid)
+    case_id=case_id.strip()
+    if not person:raise HTTPException(404)
+    if workflow not in WORKFLOWS or (person.role != 'admin' and workflow not in (person.form_permissions or [])):
+        return render_users(request,db,error='Esta persona no tiene permiso para ese formulario.',status_code=400)
+    case=db.get(Case,case_id)
+    if not case:
+        return render_users(request,db,error='No existe un expediente con ese identificador.',status_code=400)
+    if case.needs_reconciliation or case.current_status in ARCHIVED_STATUSES:
+        return render_users(request,db,error='El expediente debe estar activo y conciliado para asignarlo.',status_code=400)
+    previous=db.scalars(select(CaseAssignment).where(
+        CaseAssignment.case_id==case_id,CaseAssignment.workflow==workflow)).all()
+    for link in previous:db.delete(link)
+    db.flush()
+    db.add(CaseAssignment(case_id=case_id,user_id=person.id,workflow=workflow,
+                          source='manual',matched_text='Asignación confirmada por administrador'))
+    audit(db,admin.email,'ASIGNACION_MANUAL',case_id,
+          {'usuario':person.email,'formulario':workflow,'sustituidos':[a.user_id for a in previous]})
     db.commit()
-    return render_users(request,db,invitation={'email':email,'url':invitation_url(code)})
+    return render_users(request,db,notice=f'{case_id} asignado a {person.name} en {workflow}.')
 
 @app.post('/usuarios/{uid}/permisos')
 def update_permissions(request:Request,uid:int,csrf:str=Form(...),permissions:list[str]=Form([]),
