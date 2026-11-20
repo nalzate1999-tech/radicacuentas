@@ -1,0 +1,19 @@
+{% extends 'base.html' %}{% block title %}Gestión {{ mode }}{% endblock %}{% block content %}
+<div class="pagehead"><div><div class="eyebrow">FORMULARIO {{ '02 · SUPERVISOR/REVISOR' if mode=='revisor' else ('03 · SEGUIMIENTO' if mode=='seguimiento' else '04 · ABOGADOS') }}</div>
+<h1>{{ 'Revisión del supervisor' if mode=='revisor' else ('Gestión de envíos' if mode=='seguimiento' else 'Revisión jurídica o técnica') }}</h1><p>Expediente {{ case.id_caso }} · {{ case.contractor_name }}</p></div><a href="/casos/{{ case.id_caso }}" class="btn">← Volver al caso</a></div>
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+<form class="panel narrow" action="/casos/{{ case.id_caso }}/{{ mode }}" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"/>
+<div class="field"><label>Correo de quien realiza el movimiento</label><input type="email" value="{{ user.email }}" readonly/><small>Se toma automáticamente de la cuenta autenticada.</small></div>
+<div class="field"><label>ID_CASO</label><input value="{{ case.id_caso }}" readonly/></div>
+{% if mode=='abogados' %}<div class="field"><label>Tipo de revisión *</label><select name="tipo_revision" required id="revision_type"><option value="">Seleccionar</option><option>Técnica</option><option>Jurídica</option></select></div>
+<div class="field"><label>Proveedor *</label><select name="proveedor" required id="provider"><option value="">Seleccionar</option><option>Soluciones Territoriales</option><option>Velázquez Osorio</option></select></div>{% endif %}
+<div class="field"><label>{{ 'Acción *' if mode=='seguimiento' else 'Resultado *' }}</label><select name="{{ 'accion' if mode=='seguimiento' else 'resultado' }}" id="action_select" required><option value="">Seleccionar</option>{% for op in options %}<option value="{{ op }}">{{ op }}</option>{% endfor %}</select></div>
+{% if mode=='seguimiento' %}<div class="field" id="date_wrap" hidden><label>Fecha real de cierre financiera *</label><input type="date" id="date_input" name="fecha_cierre"/></div>
+<div class="field"><label>¿Este envío aplica a más de un frente? *</label><select name="frente_multiple" id="multi_select"><option>No</option><option>Sí</option></select></div>
+<div class="field" id="fronts_wrap" hidden><label>Frentes paralelos *</label><div class="checks"><label class="checkline"><input type="checkbox" name="frentes" value="REVISOR"/> Revisor</label>
+<label class="checkline"><input type="checkbox" name="frentes" value="TECNICA"/> Firma revisora técnica</label>
+<label class="checkline"><input type="checkbox" name="frentes" value="JURIDICA"/> Firma revisora jurídica</label></div></div>{% endif %}
+<div class="field"><label>Observaciones *</label><textarea name="observaciones" rows="5" required maxlength="5000" placeholder="Describa el resultado y la gestión realizada"></textarea></div>
+<div class="form-actions"><a href="/casos/{{ case.id_caso }}" class="btn">Cancelar</a><button class="btn primary" type="submit">Guardar movimiento</button></div></form>
+<script>document.addEventListener('DOMContentLoaded',()=>{const a=document.getElementById('action_select'),dateWrap=document.getElementById('date_wrap'),dateInput=document.getElementById('date_input');if(a&&dateWrap){function t(){let closed=a.value==='Cerrar';dateWrap.hidden=!closed;dateInput.required=closed}a.addEventListener('change',t);t()}const m=document.getElementById('multi_select'),f=document.getElementById('fronts_wrap');if(m&&f){function t(){f.hidden=m.value!=='Sí'}m.addEventListener('change',t);t()}const r=document.getElementById('revision_type'),p=document.getElementById('provider');if(r&&p){r.addEventListener('change',()=>{p.value=r.value==='Técnica'?'Soluciones Territoriales':r.value==='Jurídica'?'Velázquez Osorio':''})}});</script>
+{% endblock %}

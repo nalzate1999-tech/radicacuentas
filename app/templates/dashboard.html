@@ -1,0 +1,11 @@
+{% extends 'base.html' %}{% block title %}Panel{% endblock %}{% block content %}
+<div class="pagehead"><div><div class="eyebrow">RESUMEN OPERATIVO</div><h1>Panel de control</h1><p>Información en tiempo real desde la base de datos central.</p></div>{% if user.role in ['admin','seguimiento'] %}<a class="btn primary" href="/casos/nuevo">＋ Registrar cuenta</a>{% endif %}</div>
+<div class="metrics"><article class="metric"><div class="metric-label">Casos registrados</div><div class="metric-value">{{ '{:,}'.format(total).replace(',', '.') }}</div><div class="metric-foot">Histórico y nuevos</div></article>
+<article class="metric"><div class="metric-label">Cerrados o pagados</div><div class="metric-value">{{ '{:,}'.format(closed).replace(',', '.') }}</div><div class="metric-foot">Estados finales</div></article>
+<article class="metric"><div class="metric-label">SLA vencido</div><div class="metric-value bad">{{ '{:,}'.format(overdue).replace(',', '.') }}</div><div class="metric-foot">Casos con plazo vencido</div></article>
+<article class="metric"><div class="metric-label">Movimientos</div><div class="metric-value">{{ '{:,}'.format(movements).replace(',', '.') }}</div><div class="metric-foot">Eventos del historial</div></article></div>
+<div class="two-columns"><section class="panel"><div class="panel-heading"><h2>Distribución por estado</h2></div>
+{% for state,count in by_status %}<div class="bar-line"><div class="bar-caption"><span>{{ (state or 'Sin estado').replace('_',' ') }}</span><b>{{ count }}</b></div><div class="bar-track"><div style="width: {{ (100*count/total if total else 0)|round(1) }}%"></div></div></div>{% else %}<p class="muted">Sin datos cargados.</p>{% endfor %}</section>
+<section class="panel"><div class="panel-heading"><h2>Últimos registros</h2><a href="/casos">Ver todos</a></div>
+{% for c in recent %}<a class="recent-item" href="/casos/{{ c.id_caso }}"><div><b>{{ c.id_caso }}</b><small>{{ c.contractor_name or 'Sin contratista' }}</small></div><span class="pill">{{ (c.current_status or '').replace('_',' ') }}</span></a>{% else %}<p class="muted">Aún no hay casos.</p>{% endfor %}</section></div>
+{% endblock %}

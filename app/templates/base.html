@@ -1,0 +1,19 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{% block title %}Radicación de cuentas{% endblock %} · Gestión de cuentas</title>
+<link rel="stylesheet" href="{{ url_for('static', path='style.css') }}"/></head>
+<body>{% if user %}<div class="layout"><aside class="sidebar">
+<div class="brand"><span class="brandmark">RC</span><div><strong>RadicaCuentas</strong><small>Gestión institucional</small></div></div>
+<div class="sidebar-section">OPERACIÓN</div>
+<nav aria-label="Navegación principal"><a href="/panel" class="{% if request.url.path == '/panel' %}active{% endif %}">▦ <span>Panel general</span></a>
+<a href="/casos" class="{% if request.url.path.startswith('/casos') %}active{% endif %}">▤ <span>Casos</span></a>
+{% if user.role in ['admin','seguimiento'] %}<a href="/casos/nuevo">＋ <span>Nuevo registro</span></a>{% endif %}
+<a href="/radicacion" class="{% if request.url.path.startswith('/radicacion') %}active{% endif %}">▦ <span>Radicación mensual</span></a>
+<a href="/informes" class="{% if request.url.path.startswith('/informes') %}active{% endif %}">▥ <span>Informes</span></a></nav>
+{% if user.role == 'admin' %}<div class="sidebar-section">ADMINISTRACIÓN</div><nav><a href="/administracion">↧ <span>Migración</span></a><a href="/usuarios">♙ <span>Usuarios</span></a><a href="/auditoria">◎ <span>Auditoría</span></a><a href="/festivos">▦ <span>Festivos / SLA</span></a></nav>{% endif %}
+<div class="side-bottom"><div class="identity"><div class="avatar">{{ user.name[:1]|upper }}</div><div><b>{{ user.name }}</b><small>{{ roles.get(user.role, user.role) }}</small></div></div>
+<a class="account-link" href="/perfil">Cambiar contraseña</a><form action="/salir" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"/><button class="logout" type="submit">Cerrar sesión</button></form></div></aside>
+<div class="body-content"><header class="topbar"><span class="mobile-brand">RadicaCuentas</span><span class="topbar-text">Sistema de radicación y seguimiento · Zona horaria Bogotá</span><span class="user-dot">{{ user.email }}</span></header>
+<main class="main">{% block content %}{% endblock %}</main></div></div>
+{% else %}<main>{% block content_public %}{% endblock %}</main>{% endif %}
+</body></html>

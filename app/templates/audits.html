@@ -1,0 +1,5 @@
+{% extends 'base.html' %}{% block title %}Auditoría{% endblock %}{% block content %}
+<div class="pagehead"><div><div class="eyebrow">TRAZABILIDAD</div><h1>Auditoría</h1><p>Bitácora de operaciones del nuevo sistema y registros históricos sin modificar.</p></div></div>
+<div class="two-columns"><section class="panel"><h2>Acciones recientes</h2>{% for a in recent %}<div class="task"><div><b>{{ a.action }}</b><small>{{ a.actor }} · {{ a.created_at }}</small><small>{{ a.target }}</small></div></div>{% else %}<p class="muted">Sin acciones nuevas.</p>{% endfor %}</section>
+<section class="panel"><h2>LOG histórico</h2>{% for l in logs %}<div class="task"><div><b>{{ l.level }} · {{ l.process }}</b><small>{{ l.created_at }} · {{ l.case_id or 'Sin caso' }}</small><small>{{ (l.detail or '')[:160] }}</small></div></div>{% else %}<p class="muted">Sin registros históricos.</p>{% endfor %}</section></div>
+<div class="pagination">Página {{ page }} <a class="btn" href="?page={{ page+1 }}">Siguiente</a></div>{% endblock %}

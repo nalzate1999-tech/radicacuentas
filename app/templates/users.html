@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% block title %}Usuarios{% endblock %}{% block content %}
+<div class="pagehead"><div><div class="eyebrow">SEGURIDAD</div><h1>Usuarios y permisos</h1><p>Acceso cerrado: los usuarios no se autoregistran.</p></div></div>
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+<div class="two-columns"><section class="panel"><h2>Crear usuario</h2><form method="post" action="/usuarios"><input type="hidden" name="csrf" value="{{ csrf }}"/>
+<div class="field"><label>Nombre</label><input name="name" required maxlength="160"/></div>
+<div class="field"><label>Correo</label><input name="email" type="email" required/></div>
+<div class="field"><label>Contraseña temporal (mínimo 12 caracteres)</label><input type="password" name="password" minlength="12" required/></div>
+<div class="field"><label>Rol</label><select name="role" required>{% for k,v in roles.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></div>
+<button type="submit" class="btn primary">Crear usuario</button></form></section>
+<section class="panel"><h2>Usuarios activos</h2>{% for item in users %}<div class="task"><div><b>{{ item.name }}</b><small>{{ item.email }} · {{ roles[item.role] if item.role in roles else item.role }}</small></div>
+{% if item.id!=user.id %}<form method="post" action="/usuarios/{{ item.id }}/estado"><input type="hidden" name="csrf" value="{{ csrf }}"/><button type="submit" class="btn tiny">{{ 'Desactivar' if item.active else 'Activar' }}</button></form>{% else %}<span class="pill">Mi cuenta</span>{% endif %}</div>
+{% if item.id!=user.id %}<form action="/usuarios/{{ item.id }}/rol" method="post" class="role-form"><input type="hidden" name="csrf" value="{{ csrf }}"/>
+<select name="role" aria-label="Rol de {{ item.name }}">{% for k,v in roles.items() %}<option value="{{ k }}" {% if item.role==k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select><button type="submit" class="btn tiny">Guardar rol</button></form>{% endif %}
+{% else %}<p class="muted">Sin usuarios.</p>{% endfor %}</section></div>
+<p class="fine">Para producción se recomienda añadir inicio de sesión institucional SSO/MFA y política de rotación de credenciales, sujeto a la disponibilidad del proveedor de identidad.</p>{% endblock %}

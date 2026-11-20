@@ -1,0 +1,11 @@
+{% extends 'base.html' %}{% block title %}Ingreso{% endblock %}
+{% block content_public %}<div class="login-shell"><section class="login-card">
+<div class="login-icon">RC</div><div class="eyebrow">ACCESO SEGURO</div>
+<h1>Radicación de cuentas</h1><p>Plataforma integrada de seguimiento, revisiones, radicación y control de SLA.</p>
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+<form method="post" action="/ingresar"><input type="hidden" name="csrf" value="{{ csrf }}"/>
+<label for="email">Correo electrónico</label><input type="email" id="email" name="email" placeholder="nombre@institucion.gov.co" required autocomplete="username"/>
+<label for="password">Contraseña</label><input type="password" id="password" name="password" required autocomplete="current-password"/>
+<button class="btn primary full" type="submit">Ingresar al sistema</button></form>
+<p class="fine">El acceso requiere una cuenta autorizada por el administrador.</p>
+</section></div>{% endblock %}

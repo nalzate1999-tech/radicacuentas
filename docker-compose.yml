@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: radicacion
+      POSTGRES_USER: radicacion
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD en .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radicacion -d radicacion"]
+      interval: 5s
+      retries: 25
+      timeout: 3s
+  web:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db: {condition: service_healthy}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://radicacion:${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD}@db:5432/radicacion
+    ports:
+      - "127.0.0.1:8000:8000"
+  worker:
+    profiles: ["notifications"]
+    build: .
+    command: ["python", "-m", "app.cli", "worker"]
+    restart: unless-stopped
+    depends_on:
+      db: {condition: service_healthy}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://radicacion:${POSTGRES_PASSWORD:?Configure POSTGRES_PASSWORD}@db:5432/radicacion
+volumes:
+  postgres_data:
