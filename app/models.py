@@ -20,6 +20,14 @@ class User(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+class UserAlias(Base):
+    __tablename__ = 'user_aliases'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), nullable=False, index=True)
+    value: Mapped[str] = mapped_column(String(160), nullable=False)
+    normalized: Mapped[str] = mapped_column(String(180), nullable=False, index=True)
+    __table_args__ = (UniqueConstraint('user_id', 'normalized', name='uq_user_alias_key'),)
+
 class Case(Base):
     __tablename__ = 'cases'
     id_caso: Mapped[str] = mapped_column(String(65), primary_key=True)
@@ -57,6 +65,17 @@ class Case(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     events = relationship('Event', back_populates='case', order_by='Event.occurred_at')
     tasks = relationship('Subtask', back_populates='case')
+
+class CaseAssignment(Base):
+    __tablename__ = 'case_assignments'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    case_id: Mapped[str] = mapped_column(String(65), ForeignKey('cases.id_caso'), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), nullable=False, index=True)
+    workflow: Mapped[str] = mapped_column(String(25), nullable=False)
+    source: Mapped[str] = mapped_column(String(15), nullable=False, default='auto')
+    matched_text: Mapped[str | None] = mapped_column(String(250))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (UniqueConstraint('case_id', 'user_id', 'workflow', name='uq_case_user_workflow'),)
 
 class Event(Base):
     __tablename__ = 'events'
