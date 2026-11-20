@@ -128,3 +128,20 @@
 @media(max-width:760px){.report-filter-form,.inbox-filters{grid-template-columns:1fr}.report-form-actions,.inbox-query{grid-column:1}.report-form-actions .btn{flex:1}.report-kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.kpi-card{padding:15px 12px;border-radius:16px}.kpi-value{font-size:27px}.report-panel{padding:17px 14px}.report-month-grid{gap:4px;height:160px}.report-month-grid small{font-size:9px}.inbox-case{grid-template-columns:1fr;padding:17px 16px;gap:12px}.inbox-case-side{display:flex;flex-direction:row;align-items:center;justify-content:space-between;flex-wrap:wrap}.inbox-case-side .btn{width:100%}.inbox-home .panel-heading{flex-wrap:wrap}.inbox-home-line{align-items:stretch;flex-direction:column}.inbox-home-line .btn{width:100%}.inbox-head{flex-wrap:wrap}.workflow-back{flex-wrap:wrap}.report-filter-form input,.report-filter-form select,.inbox-filters input,.inbox-filters select{font-size:16px}}
 @media(max-width:380px){.report-kpis{grid-template-columns:1fr}.report-month-grid{gap:2px}.report-month-grid small{font-size:8px}}
 .inbox-filters .case-search-input input{padding-left:42px}
+
+
+/* Identidad de usuarios y vinculacion de gestiones */
+.identity-editor{margin:11px 0;border:1px solid #e5e8f4;border-radius:14px;background:#fafbff}
+.identity-editor summary{display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;color:#4258b6;font-size:12px;font-weight:800}
+.identity-editor summary .icon{height:16px;width:16px}
+.identity-editor[open] summary{border-bottom:1px solid #e7ebfa}
+.identity-editor form{padding:14px;display:grid;gap:10px}
+.identity-editor .field{margin-bottom:0}
+.identity-editor label{font-size:11px;font-weight:800;display:block;margin-bottom:6px}
+.identity-editor textarea,.identity-editor input,.identity-editor select{width:100%;max-width:100%;min-width:0;box-sizing:border-box;background:#fff;border:1px solid #dbe0f0;border-radius:11px;padding:11px 12px;font:inherit;color:#28365e}
+.identity-editor textarea{resize:vertical;min-height:65px}
+.identity-inline-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:9px}
+.identity-subheading{font-size:11px;color:#3b4869}
+.identity-editor .btn{justify-self:start}
+.identity-case-count{color:#3d5cbd!important;font-weight:800;margin-top:5px!important}
+@media(max-width:650px){.identity-inline-fields{grid-template-columns:1fr}}
