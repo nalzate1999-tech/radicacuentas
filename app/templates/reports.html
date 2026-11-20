@@ -1,6 +1,53 @@
-{% extends 'base.html' %}{% block title %}Informes{% endblock %}{% block content %}
-<div class="pagehead"><div><div class="eyebrow">INTELIGENCIA OPERATIVA</div><h1>Informes</h1><p>Indicadores calculados por SQL desde la base central.</p></div>{% if can('exportar') %}<a href="/informes/casos.csv" class="btn primary">↓ Descargar casos CSV</a>{% endif %}</div>
-<div class="metrics"><div class="metric"><div class="metric-label">Expedientes totales</div><div class="metric-value">{{ total }}</div></div><div class="metric"><div class="metric-label">En trámite</div><div class="metric-value">{{ pending }}</div><div class="metric-foot">Excluye cerrados y pagados</div></div><div class="metric"><div class="metric-label">Cerrados o pagados</div><div class="metric-value">{{ closed }}</div><div class="metric-foot"><a href="/casos?vista=cerrados">Consultar histórico</a></div></div><div class="metric"><div class="metric-label">Movimientos registrados</div><div class="metric-value">{{ events }}</div></div></div>
-<div class="two-columns"><section class="panel"><h2>Distribución por responsable actual</h2><div class="table-wrap"><table><thead><tr><th>Responsable</th><th>Casos</th></tr></thead><tbody>{% for k,v in by_owner %}<tr><td>{{ k or 'Sin responsable' }}</td><td>{{ v }}</td></tr>{% endfor %}</tbody></table></div></section>
-<section class="panel"><h2>Seguimiento · casos en trámite</h2><div class="table-wrap"><table><thead><tr><th>Persona</th><th>Casos</th></tr></thead><tbody>{% for k,v in by_assignee %}<tr><td>{{ k or 'Sin asignar' }}</td><td>{{ v }}</td></tr>{% endfor %}</tbody></table></div></section></div>
-<p class="fine">Para informes adicionales de productividad por día, duración por etapa y devoluciones, los movimientos originales permanecen disponibles para extender este módulo sin duplicar bases.</p>{% endblock %}
+{% extends 'base.html' %}{% block title %}Gestion y cumplimiento{% endblock %}{% block content %}
+{% macro pct_card(title,pct,numer,denom,description,tone='') %}
+<article class="kpi-card {{ tone }}">
+ <div class="kpi-card-top"><span>{{ title }}</span><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg></div>
+ <div class="kpi-value">{% if pct is not none %}{{ '%.1f'|format(pct) }}<span>%</span>{% else %}<small>Sin datos</small>{% endif %}</div>
+ <div class="kpi-progress" role="img" aria-label="{{ title }}"><div style="width:{{ pct if pct is not none else 0 }}%"></div></div>
+ <div class="kpi-sub">{{ numer }} de {{ denom }} expedientes</div>
+ <p>{{ description }}</p>
+</article>
+{% endmacro %}
+<div class="pagehead"><div><div class="eyebrow">INTELIGENCIA OPERATIVA</div><h1>Gestion y cumplimiento</h1>
+ <p>Porcentajes calculados desde PostgreSQL. Filtra por periodo o responsable para revisar la operacion.</p></div>{% if can('exportar') %}<a href="/informes/casos.csv" class="btn">Exportar casos CSV</a>{% endif %}</div>
+<section class="panel report-filters"><form class="report-filter-form" method="get" action="/informes">
+ <div><label for="r-period">Periodo de cuenta</label><input id="r-period" name="periodo" value="{{ period }}" maxlength="6" inputmode="numeric" placeholder="AAAAMM (opcional)"/></div>
+ <div><label for="r-owner">Responsable de seguimiento</label><select id="r-owner" name="responsable"><option value="">Todos los responsables</option>
+ {% for person in assignees %}<option value="{{ person }}" {% if assignee==person %}selected{% endif %}>{{ person }}</option>{% endfor %}</select></div>
+ <div><label for="r-year">Ano de radicacion</label><select name="anio" id="r-year">{% for y in range(2025,2031) %}<option value="{{ y }}" {% if y==reporting_year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></div>
+ <div class="report-form-actions"><button type="submit" class="btn primary">Aplicar filtros</button><a href="/informes" class="btn">Restablecer</a></div>
+ </form></section>
+<div class="report-quick-total"><strong>{{ total }} expedientes</strong> en el alcance seleccionado &middot; {{ pending }} en tramite &middot; {{ closed }} cerrados o pagados</div>
+<div class="report-kpis">
+ {{ pct_card('Finalizacion',close_pct,closed,total,'Cerrados o pagados / total.') }}
+ {{ pct_card('En plazo actual',in_time_pct,in_time,defined_sla,'Solo activos con SLA definido.','kpi-positive') }}
+ {{ pct_card('SLA vencido',overdue_pct,overdue,defined_sla,'Solo activos con SLA definido.','kpi-negative') }}
+ {{ pct_card('Con devoluciones',returned_pct,returned,total,'Casos con al menos un evento de devolucion.','kpi-attention') }}
+</div>
+<div class="two-columns report-columns">
+ <section class="panel report-panel"><div class="panel-heading"><div><h2>Distribucion por etapa</h2><p>Porcentaje sobre {{ total }} expedientes del filtro.</p></div></div>
+ {% for name,count,pct in by_stage %}
+ <div class="report-bar-row"><div><span>{{ name.replace('_',' ') }}</span><b>{{ count }} &middot; {{ '%.1f'|format(pct or 0) }}%</b></div>
+ <div class="report-track"><div style="width:{{ pct or 0 }}%"></div></div></div>
+ {% else %}<p class="muted">No hay datos para este filtro.</p>{% endfor %}
+ </section>
+ <section class="panel report-panel"><div class="panel-heading"><div><h2>Radicacion registrada</h2><p>Datos consolidados del ano {{ reporting_year }}.</p></div></div>
+ <div class="report-secondary-kpi">{% if filed_pct is not none %}{{ '%.1f'|format(filed_pct) }}<span>%</span>{% else %}<small>Sin datos</small>{% endif %}</div>
+ <div class="report-track"><div style="width:{{ filed_pct or 0 }}%"></div></div>
+ <p>{{ filed }} meses marcados como radicados de {{ filed_total }} registros mensuales.</p>
+ <p class="fine">Indicador historico: no equivale al cumplimiento del SLA ni a expedientes cerrados.</p>
+ <a class="report-link" href="/casos?vista=pendientes">Consultar expedientes activos</a>
+ </section>
+</div>
+<section class="panel report-panel"><div class="panel-heading"><div><h2>Gestion por responsable</h2><p>Casos asignados y porcentaje de finalizacion en el alcance.</p></div></div>
+ <div class="table-wrap"><table class="report-table"><thead><tr><th>Responsable</th><th>Asignados</th><th>Finalizados</th><th>% finalizacion</th></tr></thead><tbody>
+ {% for person,n,done,pct in by_assignee %}<tr><td><a href="/casos?q={{ person|urlencode }}">{{ person }}</a></td><td>{{ n }}</td><td>{{ done }}</td><td><strong>{{ '%.1f'|format(pct or 0) }}%</strong><div class="report-track tiny"><div style="width:{{ pct or 0 }}%"></div></div></td></tr>
+ {% else %}<tr><td colspan="4">Sin responsables asignados en el filtro.</td></tr>{% endfor %}
+ </tbody></table></div>
+</section>
+<section class="panel report-panel"><div class="panel-heading"><div><h2>Evolucion mensual de expedientes</h2><p>Por periodo de cuenta &middot; {{ reporting_year }}</p></div></div>
+ <div class="report-month-grid">{% for m,count,width in months %}<div><div class="report-month-count">{{ count }}</div><div class="report-month-column"><div style="height:{{ width }}%"></div></div><small>{{ ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][m-1] }}</small></div>{% endfor %}</div>
+ <p class="fine">La distribucion por mes utiliza el periodo de la cuenta, no la fecha de cargue historico.</p>
+</section>
+<p class="fine">Metodologia: SLA en plazo = activos con vencimiento igual o posterior a hoy / activos con fecha de SLA. Los casos sin SLA quedan fuera del denominador ({{ no_sla }} en tramite sin SLA activo). El cumplimiento historico al momento del cierre no se estima cuando falta una fecha limite verificable.</p>
+{% endblock %}
