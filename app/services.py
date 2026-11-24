@@ -103,10 +103,15 @@ def add_event(db,case,kind,actor,observations='',role='',status=None,owner=None,
     case.last_observation=observations or kind
     return e
 
-def change_status(db,case,status,owner):
-    case.current_status=status
-    case.current_owner=owner
-    case.sla_due = None if status in STOP_STATUSES else sla_deadline(db,utcnow(),case.special)
+def change_status(db, case, status, owner):
+    """Preserva el vencimiento del ciclo activo al cambiar de etapa."""
+    case.current_status = status
+    case.current_owner = owner
+    if status in STOP_STATUSES:
+        case.sla_due = None
+    elif case.sla_due is None:
+        # El primer movimiento hacia revision activa el plazo inicial.
+        case.sla_due = sla_deadline(db, utcnow(), case.special)
 
 def queue_notification(db,case_id,to_email,kind,subject,body):
     if not to_email or '@' not in to_email:return
@@ -209,11 +214,22 @@ def apply_followup(db,case,action,observations,actor,multi=False,fronts=None,clo
     if multi and not fronts:
         raise BusinessError('Seleccione los frentes paralelos.')
     st,owner,ev=FOLLOWUP_ACTIONS[action]
+    former_status = case.current_status
+    # Una subsanacion formal y su reenvio generan un nuevo ciclo completo.
+    resubmission = (
+        former_status in ('EN_AJUSTES_CONTRATISTA_SUPERVISOR',
+                          'RETOMADA_EN_SEGUIMIENTO',
+                          'DEVUELTA_POR_FINANCIERA',
+                          'DEVUELTA_POR_MESA_DIRECTIVA')
+        and action.startswith('Enviado a ')
+    )
     if action=='Enviado a firma revisora jurídica' and not case.requires_legal:
         raise BusinessError('Este caso no tiene revisión jurídica habilitada.')
     if action=='Enviado a firma revisora técnica' and not case.requires_technical:
         raise BusinessError('Este caso no tiene revisión técnica habilitada.')
     change_status(db,case,st,owner)
+    if resubmission:
+        case.sla_due = sla_deadline(db, utcnow(), case.special)
     if action=='Cerrar':
         try:case.finance_closed_at=date.fromisoformat(closed_date)
         except ValueError:raise BusinessError('Fecha de cierre inválida.')
