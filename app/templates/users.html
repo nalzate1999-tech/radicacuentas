@@ -1,5 +1,5 @@
 {% extends 'base.html' %}{% block title %}Usuarios y permisos{% endblock %}{% block content %}
-<div class="pagehead"><div><div class="eyebrow">ADMINISTRACIÓN DE ACCESOS</div><h1>Personas y permisos</h1><p>Controla qué ve y qué puede hacer cada persona, por correo electrónico y por formulario.</p></div><span class="header-counter"><svg class="icon"><use href="#i-users"/></svg> {{ users|length }} cuentas</span></div>
+<div class="pagehead"><div><div class="eyebrow">ADMINISTRACIÓN DE ACCESOS</div><h1>Personas y permisos</h1><a class="btn" href="/personas-formularios">Nombres y funciones de los formularios</a><p>Controla qué ve y qué puede hacer cada persona, por correo electrónico y por formulario.</p></div><span class="header-counter"><svg class="icon"><use href="#i-users"/></svg> {{ users|length }} cuentas</span></div>
 {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
 {% if notice %}<div class="alert success">{{ notice }}</div>{% endif %}
 {% if request.query_params.get('eliminado') %}<div class="alert success">El usuario fue eliminado. Los expedientes y la auditoría se conservaron.</div>{% endif %}

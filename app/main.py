@@ -31,6 +31,7 @@ from .identity import rebuild_assignments, replace_aliases, parse_aliases, WORKF
 from .assignment_flow import (eligible_users, validate_target, assigned_to, assign_control,
                               transfer_stage, stage_for, stage_after_followup,
                               stage_after_review, adjust_new_event_owner)
+from .assignment_flow import REVIEW_TYPE_LABELS, review_types_for, validate_specialty, specialty_for_case
 from .analytics import report_data
 from .work_queue import (queue_query, authorized_workflows, recommended_workflow,
                          WORKFLOW_LABELS)
@@ -47,7 +48,7 @@ ph=PasswordHasher(time_cost=3,memory_cost=65536,parallelism=4)
 ROLES={'admin':'Administrador','seguimiento':'Seguimiento','revisor':'Revisor','abogados':'Firmas jurídica/técnica','consulta':'Consulta'}
 FORM_PERMISSIONS={
     'registro':'Registro de cuentas',
-    'revision':'Primera revisión',
+    'revision':'Revisor clásico · Primera revisión',
     'segunda_revision':'Segunda revisión (usuario específico)',
     'seguimiento':'Gestión y seguimiento',
     'juridica':'Revisión jurídica y técnica',
@@ -136,7 +137,7 @@ def check_csrf(request,token):
 def ctx(request,db,**extra):
     u=current_user(request,db)
     if not request.session.get('csrf'):request.session['csrf']=secrets.token_urlsafe(32)
-    return dict(request=request,user=u,csrf=request.session['csrf'],roles=ROLES,can=lambda perm:can(u,perm),form_permissions=FORM_PERMISSIONS,permission_labels=PERMISSIONS,**extra)
+    return dict(request=request,user=u,csrf=request.session['csrf'],roles=ROLES,can=lambda perm:can(u,perm),form_permissions=FORM_PERMISSIONS,permission_labels=PERMISSIONS,review_type_labels=REVIEW_TYPE_LABELS,review_types_for=review_types_for,**extra)
 
 def render(request,db,template,**extra):
     return templates.TemplateResponse(request,template,ctx(request,db,**extra))
@@ -683,7 +684,9 @@ def follow_post(request:Request,case_id:str,csrf:str=Form(...),accion:str=Form(.
             if accion not in FOLLOWUP_ACTIONS:raise BusinessError('Acción no válida.')
             stage=stage_after_followup(accion)
             if stage in ('revision','segunda_revision','juridica'):
-                validate_target(db,destino_usuario_id,stage)
+                recipient=validate_target(db,destino_usuario_id,stage)
+                if stage=='juridica':
+                    validate_specialty(recipient,'tecnica' if accion=='Enviado a firma revisora técnica' else 'juridica')
             apply_followup(db,case,accion,observaciones,u.email,
                            frente_multiple=='Sí',frentes,fecha_cierre or None)
             next_user=transfer_stage(db,case,stage,destino_usuario_id)
@@ -714,6 +717,10 @@ def legal_post(request:Request,case_id:str,csrf:str=Form(...),tipo_revision:str=
     if case is None:raise HTTPException(409,'El expediente ya finalizó.')
     require_stage_assignment(db,case,u,'juridica')
     try:
+        kind='tecnica' if tipo_revision=='Técnica' else 'juridica'
+        validate_specialty(u,kind)
+        if kind != specialty_for_case(case):
+            raise BusinessError('El tipo de revisión no corresponde a la etapa asignada.')
         apply_legal(db,case,tipo_revision,proveedor,resultado,observaciones,u.email)
         stage='seguimiento' if resultado=='Aprobado' else 'administracion'
         transfer_stage(db,case,stage)
@@ -758,6 +765,7 @@ def admin_redistribute(request:Request,case_id:str,csrf:str=Form(...),
         elif gestion=='juridica':
             if not (case.requires_legal or case.requires_technical):
                 raise BusinessError('El caso no tiene revisión jurídica o técnica habilitada.')
+            validate_specialty(target,'juridica' if case.requires_legal else 'tecnica')
             case.current_status=('EN_FIRMA_REVISORA_JURIDICA' if case.requires_legal else
                                  'EN_FIRMA_REVISORA_TECNICA')
         if gestion=='seguimiento':
@@ -932,6 +940,8 @@ def update_user_identity(request:Request,uid:int,csrf:str=Form(...),
     before=person.name
     try:
         person.name=name
+        for case in db.scalars(select(Case).join(CaseAssignment,CaseAssignment.case_id==Case.id_caso).where(CaseAssignment.user_id==uid,CaseAssignment.workflow=='seguimiento',~Case.current_status.in_(ARCHIVED_STATUSES))):
+            case.followup_assignee=name
         summary=replace_aliases(db,person,aliases)
         audit(db,admin.email,'IDENTIDAD_USUARIO',person.email,
               {'antes':before,'despues':name,'aliases':parse_aliases(aliases),'asociaciones':summary})
@@ -957,6 +967,9 @@ def assign_case_to_person(request:Request,uid:int,csrf:str=Form(...),case_id:str
         return render_users(request,db,error='No existe un expediente con ese identificador.',status_code=400)
     if case.needs_reconciliation or case.current_status in ARCHIVED_STATUSES:
         return render_users(request,db,error='El expediente debe estar activo y conciliado para asignarlo.',status_code=400)
+    if workflow=='juridica':
+        try:validate_specialty(person,specialty_for_case(case))
+        except BusinessError as exc:return render_users(request,db,error=str(exc),status_code=400)
     previous=db.scalars(select(CaseAssignment).where(
         CaseAssignment.case_id==case_id,CaseAssignment.workflow==workflow)).all()
     for link in previous:db.delete(link)
@@ -969,17 +982,28 @@ def assign_case_to_person(request:Request,uid:int,csrf:str=Form(...),case_id:str
     return render_users(request,db,notice=f'{case_id} asignado a {person.name} en {workflow}.')
 
 @app.post('/usuarios/{uid}/permisos')
-def update_permissions(request:Request,uid:int,csrf:str=Form(...),permissions:list[str]=Form([]),
-                       db:Session=Depends(db_session)):
+def update_permissions(request:Request,uid:int,csrf:str=Form(...),permissions:list[str]=Form([]),review_types:list[str]=Form([]),
+                       review_types_configured:str=Form(''),db:Session=Depends(db_session)):
     admin=require_user(request,db,['admin']);check_csrf(request,csrf)
     target=db.get(User,uid)
     if not target:raise HTTPException(404)
     if target.role=='admin':raise HTTPException(400,'No es posible modificar permisos del administrador.')
     perms=sorted(set(permissions).intersection(PERMISSIONS))
+    specialties=sorted(set(review_types).intersection(REVIEW_TYPE_LABELS))
+    if specialties and 'juridica' not in perms:perms.append('juridica')
+    if review_types_configured and 'juridica' in perms and not specialties:
+        return render_users(request,db,error='Seleccione revisión jurídica, técnica o ambas.',status_code=400)
     if not perms:return render_users(request,db,error='Debe conservar al menos una herramienta.',status_code=400)
+    active_assignments=db.execute(select(CaseAssignment.workflow,Case)
+        .join(Case,Case.id_caso==CaseAssignment.case_id)
+        .where(CaseAssignment.user_id==target.id,~Case.current_status.in_(ARCHIVED_STATUSES))).all()
+    for workflow,case in active_assignments:
+        if workflow not in perms or (workflow=='juridica' and review_types_configured and specialty_for_case(case) not in specialties):
+            return render_users(request,db,error='La persona tiene expedientes activos en esa función. Reasígnelos antes de retirar el permiso o la especialidad.',status_code=400)
     old=list(user_permissions(target))
     target.form_permissions=perms
-    audit(db,admin.email,'CAMBIO_PERMISOS',target.email,{'antes':old,'despues':perms})
+    if review_types_configured:target.review_types=specialties
+    audit(db,admin.email,'CAMBIO_PERMISOS',target.email,{'antes':old,'despues':perms,'review_types':target.review_types})
     db.commit()
     return redirect('/usuarios')
 
@@ -1109,3 +1133,65 @@ def holidays_delete(request:Request,fecha:str,csrf:str=Form(...),db:Session=Depe
     rec=db.get(Holiday,d)
     if rec:db.delete(rec);audit(db,admin.email,'ELIMINAR_FESTIVO',fecha);db.commit()
     return redirect('/festivos')
+
+
+PERSON_FUNCTIONS = {
+    'revision': 'Revisor clásico',
+    'segunda_revision': 'Segunda revisión',
+    'juridica': 'Revisor jurídico',
+    'tecnica': 'Revisor técnico',
+    'seguimiento': 'Seguimiento',
+}
+
+def person_functions(person):
+    perms=user_permissions(person) if person.active else set(person.form_permissions or [])
+    roles=[key for key in ('revision','segunda_revision','seguimiento') if key in perms]
+    if 'juridica' in perms:roles.extend(review_types_for(person))
+    return roles
+
+
+def render_people(request,db,selected_id=0,error=None,notice=None,status_code=200):
+    people=db.scalars(select(User).where(User.role!='admin').order_by(User.name)).all()
+    selected=next((p for p in people if p.id==selected_id),None)
+    return templates.TemplateResponse(request,'people.html',ctx(request,db,
+        people=people,selected=selected,functions=PERSON_FUNCTIONS,
+        person_functions=person_functions,error=error,notice=notice),status_code=status_code)
+
+
+@app.get('/personas-formularios')
+def people_form(request:Request,usuario:int=0,db:Session=Depends(db_session)):
+    require_user(request,db,['admin'])
+    return render_people(request,db,usuario)
+
+
+@app.post('/personas-formularios')
+def save_form_person(request:Request,csrf:str=Form(...),user_id:int=Form(...),
+                     name:str=Form(...),functions:list[str]=Form([]),db:Session=Depends(db_session)):
+    admin=require_user(request,db,['admin']);check_csrf(request,csrf)
+    person=db.get(User,user_id)
+    if not person or person.role=='admin':raise HTTPException(400,'Seleccione una cuenta existente del equipo.')
+    name=' '.join(name.split())
+    chosen=set(functions)
+    if not 2<=len(name)<=160 or not chosen or not chosen.issubset(PERSON_FUNCTIONS):
+        return render_people(request,db,user_id,error='Indique un nombre de 2 a 160 caracteres y al menos una función válida.',status_code=400)
+    specialties=sorted(chosen.intersection(REVIEW_TYPE_LABELS))
+    existing=set(person.form_permissions) if person.form_permissions is not None else set(LEGACY_ROLE_PERMISSIONS.get(person.role,set()))
+    perms=existing.difference({'revision','segunda_revision','juridica','seguimiento'})
+    perms.update(chosen.intersection({'revision','segunda_revision','seguimiento'}))
+    if specialties:perms.add('juridica')
+    links=db.execute(select(CaseAssignment.workflow,Case)
+        .join(Case,Case.id_caso==CaseAssignment.case_id)
+        .where(CaseAssignment.user_id==user_id,~Case.current_status.in_(ARCHIVED_STATUSES))).all()
+    for workflow,case in links:
+        if workflow not in perms or (workflow=='juridica' and specialty_for_case(case) not in specialties):
+            return render_people(request,db,user_id,error='Reasigne primero los expedientes activos antes de retirar su función o especialidad.',status_code=400)
+    before={'name':person.name,'functions':person_functions(person)}
+    person.name=name
+    person.form_permissions=sorted(perms)
+    person.review_types=specialties
+    for workflow,case in links:
+        if workflow=='seguimiento':case.followup_assignee=name
+    audit(db,admin.email,'CONFIGURAR_PERSONA_FORMULARIOS',person.email,
+          {'antes':before,'despues':{'name':name,'functions':sorted(chosen)}})
+    db.commit()
+    return render_people(request,db,user_id,notice='Nombre y funciones actualizados en los formularios. La cuenta, su contraseña y sus expedientes conservan su vínculo.')

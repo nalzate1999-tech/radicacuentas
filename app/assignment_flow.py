@@ -144,3 +144,22 @@ def adjust_new_event_owner(db, case):
     ).order_by(Event.id.desc()).limit(1))
     if event:
         event.resulting_owner = case.current_owner
+
+
+REVIEW_TYPE_LABELS = {'juridica': 'Revisor jurídico', 'tecnica': 'Revisor técnico'}
+
+
+def review_types_for(user):
+    # Cuentas previas conservan sus dos especialidades hasta que se editen.
+    if user.role == 'admin' or user.review_types is None:
+        return ['juridica', 'tecnica']
+    return [key for key in REVIEW_TYPE_LABELS if key in user.review_types]
+
+
+def validate_specialty(user, kind):
+    if kind not in review_types_for(user):
+        raise BusinessError('La persona no tiene la especialidad requerida para esta revisión.')
+
+
+def specialty_for_case(case):
+    return 'tecnica' if 'TECNICA' in (case.current_status or '') else 'juridica'
