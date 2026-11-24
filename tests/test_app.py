@@ -571,6 +571,17 @@ def test_double_entry_queues_move_between_users():
             CaseAssignment.case_id==case_id)).all()
         assert len(rows)==1 and rows[0].workflow=='seguimiento'
         assert rows[0].user_id==accounts['control']['id']
+    from datetime import date
+    closed=carol.post(f'/casos/{case_id}/seguimiento',data={
+        'csrf':token(carol.get(f'/casos/{case_id}/seguimiento').text),
+        'accion':'Cerrar','observaciones':'Pago confirmado en financiera',
+        'fecha_cierre':date.today().isoformat()})
+    assert closed.status_code==303,closed.text[:300]
+    assert case_id not in carol.get('/bandeja?vista=control').text
+    assert case_id not in carol.get('/bandeja?vista=mios').text
+    with SessionLocal() as db:
+        assert db.get(Case,case_id).current_status=='CERRADA'
+        assert db.get(Case,case_id).finance_closed_at is not None
     assert 'Enviado a firma Directora' not in str(__import__('app.services',fromlist=['REVIEW_ACTIONS']).REVIEW_ACTIONS)
     assert 'Enviado para firma Directora' not in str(__import__('app.services',fromlist=['FOLLOWUP_ACTIONS']).FOLLOWUP_ACTIONS)
 
