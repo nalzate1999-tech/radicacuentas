@@ -763,6 +763,9 @@ def admin_redistribute(request:Request,case_id:str,csrf:str=Form(...),
         if gestion=='seguimiento':
             if not assigned_to(db,case.id_caso,target.id,'seguimiento'):
                 raise BusinessError('Seleccione el responsable permanente ya registrado. Para cambiarlo, utilice Cambiar titular en el expediente.')
+            # No conservar el estado anterior de ajustes: volvería a aparecer
+            # indebidamente en la bandeja de devoluciones del administrador.
+            case.current_status='RETOMADA_EN_SEGUIMIENTO'
             transfer_stage(db,case,'seguimiento')
         else:
             transfer_stage(db,case,gestion,target.id)
