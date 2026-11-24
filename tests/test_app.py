@@ -61,6 +61,8 @@ def test_four_forms_and_csv():
     assert r.status_code==303,r.text[:500]
     case_id=r.headers['location'].rsplit('/',1)[-1]
     assert case_id.startswith('CC-')
+    with SessionLocal() as db:
+        assert db.get(Case, case_id).sla_due is None
     assert c.post('/casos/nuevo',data=data).status_code==400
     assert c.get('/casos/'+case_id).status_code==200
     page=c.get('/casos/'+case_id+'/seguimiento')
