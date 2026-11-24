@@ -1,0 +1,39 @@
+{% extends 'base.html' %}{% block title %}Redistribuir expediente{% endblock %}
+{% block content %}
+<div class="pagehead"><div><div class="eyebrow">ADMINISTRACIÓN · REASIGNACIÓN DE TAREAS</div>
+<h1>Redistribuir expediente</h1>
+<p>{{ case.id_caso }} · {{ case.contractor_name or 'Contratista sin identificar' }}</p></div>
+<a class="btn" href="/bandeja?vista=administracion">← Bandeja de devoluciones</a></div>
+<section class="panel narrow">
+<h2>Devolución recibida</h2>
+<p class="muted">El expediente salió de la bandeja de su último revisor y requiere un nuevo destinatario. El titular de control y seguimiento lo conserva en su vista permanente.</p>
+<div class="case-lifecycle">
+<div class="case-lifecycle-stat"><span>Estado</span><strong>{{ case.current_status.replace('_',' ') }}</strong></div>
+<div class="case-lifecycle-stat"><span>Última novedad</span><strong>{{ case.last_observation or 'Sin anotaciones' }}</strong></div>
+<div class="case-lifecycle-stat"><span>Responsable de control</span><strong>{{ case.followup_assignee or 'Sin identificar' }}</strong></div>
+</div>
+<form action="/casos/{{ case.id_caso }}/redistribuir" method="post" class="form-panel">
+<input name="csrf" type="hidden" value="{{ csrf }}"/>
+<div class="field"><label for="dispatch_workflow">¿A qué etapa se devuelve? *</label>
+<select name="gestion" id="dispatch_workflow" required>
+<option value="">Seleccione el formulario de destino</option>
+<option value="revision">Primera revisión</option>
+<option value="segunda_revision">Segunda revisión</option>
+<option value="juridica">Firma jurídica / técnica</option>
+{% if control_id %}<option value="seguimiento">Regresar a control y seguimiento</option>{% endif %}
+</select></div>
+<div class="field"><label for="dispatch_user">Persona que recibirá la tarea *</label>
+<select name="destino_usuario_id" id="dispatch_user" required disabled>
+<option value="">Seleccione primero la etapa</option>
+{% for code in ['revision','segunda_revision','juridica'] %}
+{% for u in destinations[code] %}
+<option value="{{ u.id }}" data-workflow="{{ code }}" hidden disabled>{{ u.name }} · {{ u.email }}</option>
+{% endfor %}{% endfor %}
+{% if control_id %}<option value="{{ control_id }}" data-workflow="seguimiento" hidden disabled>{{ case.followup_assignee }} · titular de control</option>{% endif %}
+</select></div>
+<p class="fine">La persona seleccionada encontrará el expediente en su bandeja. Al entregar nuevamente la tarea, dejará de aparecerle como pendiente. Los movimientos y los responsables anteriores permanecen en el historial.</p>
+<div class="form-actions"><a class="btn" href="/casos/{{ case.id_caso }}">Ver expediente</a><button class="btn primary" type="submit">Enviar a la nueva bandeja</button></div>
+</form></section>
+<script>document.addEventListener('DOMContentLoaded',()=>{const w=document.getElementById('dispatch_workflow'),u=document.getElementById('dispatch_user');
+function sync(){const val=w.value;u.disabled=!val;for(const o of u.options){if(!o.value)continue;const ok=o.dataset.workflow===val;o.disabled=!ok;o.hidden=!ok;}u.value='';}w.addEventListener('change',sync);sync();});</script>
+{% endblock %}
