@@ -5,12 +5,12 @@
 <div class="tools-grid">
 {% if can('casos') %}<a class="tool-card" href="/casos"><span class="tool-icon violet"><svg class="icon"><use href="#i-list"/></svg></span><span class="tool-info"><strong>Expedientes y formularios</strong><small>Buscar, filtrar y gestionar los casos según tus permisos</small></span><span class="tool-arrow"><svg class="icon"><use href="#i-arrow"/></svg></span></a>{% endif %}
 {% if can('registro') %}<a class="tool-card" href="/casos/nuevo"><span class="tool-icon blue"><svg class="icon"><use href="#i-plus"/></svg></span><span class="tool-info"><strong>Registro de cuentas</strong><small>Formulario 01 · Registrar y generar ID</small></span><span class="tool-arrow"><svg class="icon"><use href="#i-arrow"/></svg></span></a>{% endif %}
-{% if can('revision') or can('seguimiento') or can('juridica') %}<a class="tool-card" href="/bandeja"><span class="tool-icon cyan"><svg class="icon"><use href="#i-review"/></svg></span><span class="tool-info"><strong>Mi bandeja de trabajo</strong><small>Selecciona un expediente y registra la novedad</small></span><span class="tool-arrow"><svg class="icon"><use href="#i-arrow"/></svg></span></a>{% endif %}
+{% if can('revision') or can('segunda_revision') or can('seguimiento') or can('juridica') %}<a class="tool-card" href="/bandeja"><span class="tool-icon cyan"><svg class="icon"><use href="#i-review"/></svg></span><span class="tool-info"><strong>Mi bandeja de trabajo</strong><small>Selecciona un expediente y registra la novedad</small></span><span class="tool-arrow"><svg class="icon"><use href="#i-arrow"/></svg></span></a>{% endif %}
 {% if can('informes') %}<a class="tool-card" href="/informes"><span class="tool-icon purple"><svg class="icon"><use href="#i-chart"/></svg></span><span class="tool-info"><strong>Gestión y cumplimiento</strong><small>Porcentajes, tiempos y productividad</small></span><span class="tool-arrow"><svg class="icon"><use href="#i-arrow"/></svg></span></a>{% endif %}
 {% if user.role=='admin' %}<a class="tool-card" href="/usuarios"><span class="tool-icon slate"><svg class="icon"><use href="#i-users"/></svg></span><span class="tool-info"><strong>Usuarios y permisos</strong><small>Crear cuentas por correo y asignar formularios</small></span><span class="tool-arrow"><svg class="icon"><use href="#i-arrow"/></svg></span></a>
 {% endif %}
 </div>
-{% if can('revision') or can('seguimiento') or can('juridica') %}
+{% if can('revision') or can('segunda_revision') or can('seguimiento') or can('juridica') %}
 <section class="panel inbox-home" aria-label="Bandeja de trabajo">
   <div class="panel-heading"><div><h2>{{ 'Bandeja del equipo' if inbox_scope=='equipo' else 'Casos asignados a mi' }}</h2><p>Expedientes en tramite listos para registrar movimientos.</p></div><a class="btn" href="/bandeja">Abrir bandeja ({{ inbox_count }})</a></div>
   {% for c in inbox %}
