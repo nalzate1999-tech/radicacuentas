@@ -109,8 +109,11 @@ def change_status(db, case, status, owner):
     case.current_owner = owner
     if status in STOP_STATUSES:
         case.sla_due = None
-    elif case.sla_due is None:
-        # El primer movimiento hacia revision activa el plazo inicial.
+    elif case.sla_due is None and status in (
+        'EN_PRIMERA_REVISION', 'EN_FIRMA_REVISORA_TECNICA',
+        'EN_FIRMA_REVISORA_JURIDICA', 'ENVIADA_A_SEGUNDA_REVISION'
+    ):
+        # El primer envio a un revisor activa el plazo inicial.
         case.sla_due = sla_deadline(db, utcnow(), case.special)
 
 def queue_notification(db,case_id,to_email,kind,subject,body):
