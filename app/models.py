@@ -15,6 +15,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[str] = mapped_column(String(20), default='consulta', index=True)
     form_permissions: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    review_types: Mapped[list | None] = mapped_column(JSON, nullable=True)
     invite_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     invite_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)

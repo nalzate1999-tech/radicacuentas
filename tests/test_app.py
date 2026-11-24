@@ -609,3 +609,62 @@ def test_double_entry_queues_move_between_users():
     assert 'Enviado a firma Directora' not in str(__import__('app.services',fromlist=['REVIEW_ACTIONS']).REVIEW_ACTIONS)
     assert 'Enviado para firma Directora' not in str(__import__('app.services',fromlist=['FOLLOWUP_ACTIONS']).FOLLOWUP_ACTIONS)
 
+
+def test_form_people_existing_account_names_and_specialties():
+    from app.models import CaseAssignment
+    from app.assignment_flow import eligible_users, validate_specialty
+    from app.services import BusinessError
+    import pytest
+    admin=client_as('qa@example.org')
+    csrf=token(admin.get('/personas-formularios').text)
+    email='persona-'+uuid.uuid4().hex[:8]+'@example.org'
+    with SessionLocal.begin() as db:
+        person=User(name='Nombre anterior',email=email,password_hash='unchanged-test-hash',
+                    role='consulta',active=True,form_permissions=['casos'])
+        db.add(person);db.flush();uid=person.id
+        admin_id=db.scalar(select(User.id).where(User.email=='qa@example.org'))
+        before_count=len(db.scalars(select(User)).all())
+    saved=admin.post('/personas-formularios',data={'csrf':csrf,'user_id':uid,
+        'name':'Nicolás Técnico QA','functions':['tecnica','seguimiento']})
+    assert saved.status_code==200 and 'Nombre y funciones actualizados' in saved.text
+    assert '/activar/' not in saved.text
+    with SessionLocal() as db:
+        person=db.get(User,uid)
+        assert person.review_types==['tecnica']
+        assert set(person.form_permissions)=={'casos','juridica','seguimiento'}
+        assert person.password_hash=='unchanged-test-hash' and person.invite_token_hash is None
+        assert len(db.scalars(select(User)).all())==before_count
+        assert uid in [u.id for u in eligible_users(db,'seguimiento')]
+        with pytest.raises(BusinessError):validate_specialty(person,'juridica')
+    form=admin.get('/casos/nuevo')
+    assert 'Nicolás Técnico QA' in form.text
+    r=admin.post('/casos/nuevo',data={'csrf':token(form.text),'contractor_type':'CC',
+        'contractor_name':'Especialidades QA','document':uuid.uuid4().hex[:12],
+        'contract_no':'QA-'+uuid.uuid4().hex[:10],'period':'202611','amount':'100',
+        'contractor_email':'test@example.org','control_user_id':uid,
+        'sent_by':'Contratista','requires_legal':'Sí','requires_technical':'Sí'})
+    assert r.status_code==303
+    case_id=r.headers['location'].rsplit('/',1)[-1]
+    endpoint='/casos/'+case_id+'/seguimiento'
+    denied=admin.post(endpoint,data={'csrf':csrf,'accion':'Enviado a firma revisora jurídica',
+        'observaciones':'No debe asignarse a un técnico','destino_usuario_id':uid})
+    assert denied.status_code==400 and 'especialidad requerida' in denied.text
+    allowed=admin.post(endpoint,data={'csrf':csrf,'accion':'Enviado a firma revisora técnica',
+        'observaciones':'Envío correcto','destino_usuario_id':uid})
+    assert allowed.status_code==303
+    blocked=admin.post('/personas-formularios',data={'csrf':csrf,'user_id':uid,
+        'name':'Nicolás','functions':['juridica','seguimiento']})
+    assert blocked.status_code==400 and 'expedientes activos' in blocked.text
+    renamed=admin.post('/personas-formularios',data={'csrf':csrf,'user_id':uid,
+        'name':'Nicolás Actualizado QA','functions':['tecnica','seguimiento']})
+    assert renamed.status_code==200
+    assert 'Nicolás Actualizado QA' in admin.get('/casos/'+case_id).text
+    assert 'Nicolás Actualizado QA' in admin.get('/casos/nuevo').text
+    with SessionLocal() as db:
+        assert db.get(Case,case_id).followup_assignee=='Nicolás Actualizado QA'
+        assert db.scalar(select(CaseAssignment.user_id).where(
+            CaseAssignment.case_id==case_id,CaseAssignment.workflow=='juridica'))==uid
+    viewer=client_as('viewer@example.org')
+    assert viewer.get('/personas-formularios').status_code==403
+    assert viewer.post('/personas-formularios',data={'csrf':token(viewer.get('/panel').text),
+        'user_id':uid,'name':'No autorizado','functions':['revision']}).status_code==403

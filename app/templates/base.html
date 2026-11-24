@@ -45,6 +45,7 @@
 <div class="sidebar-section admin-section">ADMINISTRACIÓN</div>
 <nav class="nav-group" aria-label="Administración">
 <a href="/usuarios" class="nav-item {% if request.url.path.startswith('/usuarios') %}active{% endif %}"><svg class="icon"><use href="#i-users"/></svg><span>Usuarios y permisos</span></a>
+<a href="/personas-formularios" class="nav-item"><svg class="icon"><use href="#i-users"/></svg><span>Nombres de formularios</span></a>
 <a href="/auditoria" class="nav-item {% if request.url.path.startswith('/auditoria') %}active{% endif %}"><svg class="icon"><use href="#i-history"/></svg><span>Auditoría</span></a>
 <a href="/festivos" class="nav-item {% if request.url.path.startswith('/festivos') %}active{% endif %}"><svg class="icon"><use href="#i-calendar"/></svg><span>Festivos y plazos</span></a>
 </nav>

@@ -13,7 +13,7 @@
 <label for="destination_user">¿A qué usuario se entrega esta etapa? *</label>
 <select name="destino_usuario_id" id="destination_user" disabled><option value="">Selecciona el destinatario autorizado</option>
 {% for workflow,label in [('revision','Primera revisión'),('segunda_revision','Segunda revisión'),('juridica','Revisión jurídica/técnica')] %}
-{% for person in destinations[workflow] %}<option value="{{ person.id }}" data-workflow="{{ workflow }}" hidden>{{ person.name }} · {{ person.email }}</option>{% endfor %}
+{% for person in destinations[workflow] %}<option value="{{ person.id }}" data-workflow="{{ workflow }}" data-specialties="{{ review_types_for(person)|join(',') }}" hidden>{{ person.name }} · {{ person.email }}{% if workflow=='juridica' %} · {{ review_types_for(person)|map('replace','juridica','Jurídico')|map('replace','tecnica','Técnico')|join(' / ') }}{% endif %}</option>{% endfor %}
 {% endfor %}
 </select><small>Después del envío, la tarea desaparece de tu bandeja y pasa a la del usuario seleccionado. Control y seguimiento mantiene visibilidad.</small></div>{% endif %}
 {% if mode=='seguimiento' %}<div class="field" id="date_wrap" hidden><label>Fecha real de cierre financiera *</label><input type="date" id="date_input" name="fecha_cierre"/></div>
@@ -31,7 +31,8 @@ function syncDestination(){if(!action||!w||!target)return;
 const workflow=destinations[action.value]||'';
 w.hidden=!workflow;target.disabled=!workflow;target.required=!!workflow;
 for(const option of target.options){if(!option.value)continue;
-const show=option.dataset.workflow===workflow;option.hidden=!show;option.disabled=!show;}
+const specialty=action.value==='Enviado a firma revisora técnica'?'tecnica':'juridica';
+const show=option.dataset.workflow===workflow&&(workflow!=='juridica'||option.dataset.specialties.split(',').includes(specialty));option.hidden=!show;option.disabled=!show;}
 if(target.selectedOptions.length&&target.selectedOptions[0].disabled)target.value='';
 }
 if(action){action.addEventListener('change',syncDestination);syncDestination();}
