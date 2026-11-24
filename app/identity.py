@@ -55,17 +55,21 @@ def _candidate_users(text, index):
 
 
 def _case_sources(case, tasks):
-    sources = [
-        ('seguimiento', case.followup_assignee),
-        ('revision', case.reviewer),
-        ('revision', case.supervisor_name),
-        ('revision', case.supervisor_email),
-    ]
+    from .assignment_flow import stage_for
+    stage = stage_for(case)
+    # El control es permanente. La revisión se vincula sólo cuando su etapa
+    # está activa, nunca por una asignación histórica que ya terminó.
+    sources = [('seguimiento', case.followup_assignee)]
+    if stage == 'revision':
+        sources += [('revision', case.reviewer),
+                    ('revision', case.supervisor_name),
+                    ('revision', case.supervisor_email)]
     for task in tasks:
         kind = (task.kind or '').upper()
         workflow = ('revision' if kind == 'REVISOR' else
                     'juridica' if kind in ('TECNICA', 'JURIDICA') else 'seguimiento')
-        if task.responsible:
+        if task.responsible and (workflow == 'seguimiento' or
+                                 (stage == workflow and task.active)):
             sources.append((workflow, task.responsible))
     return sources
 
