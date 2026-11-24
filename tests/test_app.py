@@ -47,25 +47,42 @@ def test_four_forms_and_csv():
     form=c.get('/casos/nuevo')
     assert form.status_code==200
     assert 'name="archivo"' not in form.text
+    assert 'Responsable permanente de control' in form.text
     csrf=token(form.text)
+    with SessionLocal() as db:
+        admin_id=db.scalar(select(User.id).where(User.email=='qa@example.org'))
     data={'csrf':csrf,'contractor_type':'CC','contractor_name':'Contratista QA',
           'document':'112345678','contract_no':'QA-2026-1','period':'202611',
           'amount':'250000.25','contractor_email':'contratistaqa@example.org',
-          'contractor_phone':'1234567','followup_assignee':'Brayan',
+          'contractor_phone':'1234567','control_user_id':str(admin_id),
           'reviewer':'Hector','special':'No','sent_by':'Supervisor',
           'requires_reviewer':'Sí','requires_technical':'Sí','requires_legal':'Sí'}
     r=c.post('/casos/nuevo',data=data)
-    assert r.status_code==303,r.text[:250]
+    assert r.status_code==303,r.text[:500]
     case_id=r.headers['location'].rsplit('/',1)[-1]
     assert case_id.startswith('CC-')
     assert c.post('/casos/nuevo',data=data).status_code==400
     assert c.get('/casos/'+case_id).status_code==200
+    page=c.get('/casos/'+case_id+'/seguimiento')
+    assert page.status_code==200
+    assert 'Enviado para firma Directora' not in page.text
+    assert 'Enviado a firma Directora' not in page.text
+    x=c.post('/casos/'+case_id+'/seguimiento',data={'csrf':csrf,
+           'accion':'Enviado a revisor','observaciones':'Enviado a primera revisión',
+           'destino_usuario_id':str(admin_id)})
+    assert x.status_code==303,x.text[:200]
+    assert c.get('/casos/'+case_id+'/revisor').status_code==200
     x=c.post('/casos/'+case_id+'/revisor',data={'csrf':csrf,
                'resultado':'Requiere ajustes','observaciones':'Ajustar soportes'})
     assert x.status_code==303
+    assert c.get('/casos/'+case_id+'/redistribuir').status_code==200
+    x=c.post('/casos/'+case_id+'/redistribuir',data={'csrf':csrf,
+            'gestion':'seguimiento','destino_usuario_id':str(admin_id)})
+    assert x.status_code==303
     x=c.post('/casos/'+case_id+'/seguimiento',data={'csrf':csrf,
            'accion':'Enviado a firma revisora jurídica','observaciones':'Escalado',
-           'frente_multiple':'No','fecha_cierre':''})
+           'frente_multiple':'No','fecha_cierre':'',
+           'destino_usuario_id':str(admin_id)})
     assert x.status_code==303
     x=c.post('/casos/'+case_id+'/abogados',data={'csrf':csrf,'tipo_revision':'Jurídica',
                  'proveedor':'Velázquez Osorio','resultado':'Aprobado',
