@@ -164,7 +164,8 @@ def create_case(db,data,actor):
         raise BusinessError('Tipo de contratista no reconocido.')
     if case.sent_by not in ('Contratista','Supervisor'):
         raise BusinessError('Seleccione quién envía la cuenta.')
-    # El plazo comienza con el primer envio, nunca con el registro.\n    case.sla_due=None
+    # El plazo comienza con el primer envio, nunca con el registro.
+    case.sla_due=None
     db.add(case)
     for t in SUBTASK_TYPES:
         applies=((t=='REVISOR' and case.requires_reviewer) or
