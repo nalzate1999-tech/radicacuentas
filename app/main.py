@@ -543,69 +543,219 @@ def case_detail(request:Request,case_id:str,event_page:int=1,db:Session=Depends(
                   responses=responses,event_page=event_page,event_pages=max(1,math.ceil(n_events/60)),
                   total_events=n_events,sla_color=sla_color,age=_case_age_map(db,[case])[case_id])
 
+def _workflow_page(request,db,case,mode,error=None,status_code=200):
+    choices=(list(FOLLOWUP_ACTIONS)+['Registrar novedad de control']
+             if mode=='seguimiento' and stage_for(case)=='seguimiento'
+             else ['Registrar novedad de control'] if mode=='seguimiento'
+             else [x for x in REVIEW_ACTIONS if x!='Enviado a segunda revisión']
+                  if mode=='segunda' else
+                  list(REVIEW_ACTIONS) if mode=='revisor' else LEGAL_OUTCOMES)
+    response=templates.TemplateResponse(request,'workflow.html',ctx(request,db,
+        case=case,mode=mode,options=choices,error=error,
+        destinations=stage_destination_lists(db)),status_code=status_code)
+    return response
+
+
+def _open_stage_case(db,case_id):
+    case=db.get(Case,case_id)
+    if not case:raise HTTPException(404)
+    if case.needs_reconciliation:
+        raise HTTPException(409,'El caso requiere conciliación antes de gestionar.')
+    if case.current_status in ARCHIVED_STATUSES:
+        return None
+    return case
+
+
 @app.get('/casos/{case_id}/revisor')
 def reviewer_form(request:Request,case_id:str,db:Session=Depends(db_session)):
-    require_permission(request,db,'revision');case=db.get(Case,case_id)
-    if not case:raise HTTPException(404)
-    if case.current_status in ARCHIVED_STATUSES:
-        return redirect('/casos/'+quote(case_id))
-    return render(request,db,'workflow.html',case=case,mode='revisor',options=list(REVIEW_ACTIONS),error=None)
+    u=require_permission(request,db,'revision');case=_open_stage_case(db,case_id)
+    if case is None:return redirect('/casos/'+quote(case_id))
+    require_stage_assignment(db,case,u,'revision')
+    return _workflow_page(request,db,case,'revisor')
+
 
 @app.post('/casos/{case_id}/revisor')
 def reviewer_post(request:Request,case_id:str,csrf:str=Form(...),resultado:str=Form(...),
-                  observaciones:str=Form(...),db:Session=Depends(db_session)):
+                  observaciones:str=Form(...),destino_usuario_id:int=Form(0),
+                  db:Session=Depends(db_session)):
     u=require_permission(request,db,'revision');check_csrf(request,csrf)
-    case=db.get(Case,case_id)
-    if not case:raise HTTPException(404)
-    try:apply_review(db,case,resultado,observaciones,u.email);db.commit()
+    case=_open_stage_case(db,case_id)
+    if case is None:raise HTTPException(409,'El expediente ya finalizó.')
+    require_stage_assignment(db,case,u,'revision')
+    try:
+        if resultado=='Enviado a segunda revisión' and destino_usuario_id==u.id:
+            raise BusinessError('La segunda revisión debe hacerla otra persona.')
+        if resultado not in REVIEW_ACTIONS:raise BusinessError('Resultado de revisión no válido.')
+        stage=stage_after_review(resultado)
+        if stage in ('revision','segunda_revision','juridica'):
+            validate_target(db,destino_usuario_id,stage)
+        apply_review(db,case,resultado,observaciones,u.email)
+        next_user=transfer_stage(db,case,stage,destino_usuario_id)
+        adjust_new_event_owner(db,case)
+        audit(db,u.email,'TRASLADO_ETAPA',case_id,
+              {'resultado':resultado,'etapa':stage,'destino':next_user.email if next_user else None})
+        db.commit()
     except BusinessError as exc:
-        db.rollback();return templates.TemplateResponse(request,'workflow.html',ctx(request,db,
-           case=case,mode='revisor',options=list(REVIEW_ACTIONS),error=str(exc)),status_code=400)
+        db.rollback();return _workflow_page(request,db,case,'revisor',str(exc),400)
     return redirect('/casos/'+quote(case_id))
+
+
+@app.get('/casos/{case_id}/segunda-revision')
+def second_review_form(request:Request,case_id:str,db:Session=Depends(db_session)):
+    u=require_permission(request,db,'segunda_revision');case=_open_stage_case(db,case_id)
+    if case is None:return redirect('/casos/'+quote(case_id))
+    require_stage_assignment(db,case,u,'segunda_revision')
+    return _workflow_page(request,db,case,'segunda')
+
+
+@app.post('/casos/{case_id}/segunda-revision')
+def second_review_post(request:Request,case_id:str,csrf:str=Form(...),resultado:str=Form(...),
+                       observaciones:str=Form(...),db:Session=Depends(db_session)):
+    u=require_permission(request,db,'segunda_revision');check_csrf(request,csrf)
+    case=_open_stage_case(db,case_id)
+    if case is None:raise HTTPException(409,'El expediente ya finalizó.')
+    require_stage_assignment(db,case,u,'segunda_revision')
+    try:
+        if resultado=='Enviado a segunda revisión':
+            raise BusinessError('Esta etapa ya es la segunda revisión.')
+        apply_review(db,case,resultado,observaciones,u.email)
+        stage=stage_after_review(resultado)
+        transfer_stage(db,case,stage)
+        adjust_new_event_owner(db,case)
+        audit(db,u.email,'TRASLADO_SEGUNDA_REVISION',case_id,
+              {'resultado':resultado,'etapa':stage})
+        db.commit()
+    except BusinessError as exc:
+        db.rollback();return _workflow_page(request,db,case,'segunda',str(exc),400)
+    return redirect('/casos/'+quote(case_id))
+
 
 @app.get('/casos/{case_id}/seguimiento')
 def follow_form(request:Request,case_id:str,db:Session=Depends(db_session)):
-    require_permission(request,db,'seguimiento');case=db.get(Case,case_id)
-    if not case:raise HTTPException(404)
-    if case.current_status in ARCHIVED_STATUSES:
-        return redirect('/casos/'+quote(case_id))
-    return render(request,db,'workflow.html',case=case,mode='seguimiento',options=list(FOLLOWUP_ACTIONS),error=None)
+    u=require_permission(request,db,'seguimiento');case=_open_stage_case(db,case_id)
+    if case is None:return redirect('/casos/'+quote(case_id))
+    followup_access(db,case,u)
+    return _workflow_page(request,db,case,'seguimiento')
+
 
 @app.post('/casos/{case_id}/seguimiento')
 def follow_post(request:Request,case_id:str,csrf:str=Form(...),accion:str=Form(...),
-                observaciones:str=Form(...),frente_multiple:str=Form('No'),frentes:list[str]=Form([]),
-                fecha_cierre:str=Form(''),db:Session=Depends(db_session)):
+                observaciones:str=Form(...),frente_multiple:str=Form('No'),
+                frentes:list[str]=Form([]),fecha_cierre:str=Form(''),
+                destino_usuario_id:int=Form(0),db:Session=Depends(db_session)):
     u=require_permission(request,db,'seguimiento');check_csrf(request,csrf)
-    case=db.get(Case,case_id)
-    if not case:raise HTTPException(404)
+    case=_open_stage_case(db,case_id)
+    if case is None:raise HTTPException(409,'El expediente ya finalizó.')
+    followup_access(db,case,u)
+    if accion!='Registrar novedad de control' and stage_for(case)!='seguimiento':
+        raise HTTPException(409,'Sólo puede registrar novedades de control mientras el caso esté en otra etapa.')
     try:
-        apply_followup(db,case,accion,observaciones,u.email,frente_multiple=='Sí',frentes,fecha_cierre or None)
+        if not observaciones.strip():
+            raise BusinessError('Las observaciones son obligatorias.')
+        if accion=='Registrar novedad de control':
+            add_event(db,case,'NOVEDAD_CONTROL',u.email,observaciones,
+                      role='Control y seguimiento')
+            audit(db,u.email,'NOVEDAD_CONTROL',case_id,{'observacion':observaciones})
+        else:
+            if accion not in FOLLOWUP_ACTIONS:raise BusinessError('Acción no válida.')
+            stage=stage_after_followup(accion)
+            if stage in ('revision','segunda_revision','juridica'):
+                validate_target(db,destino_usuario_id,stage)
+            apply_followup(db,case,accion,observaciones,u.email,
+                           frente_multiple=='Sí',frentes,fecha_cierre or None)
+            next_user=transfer_stage(db,case,stage,destino_usuario_id)
+            adjust_new_event_owner(db,case)
+            audit(db,u.email,'TRASLADO_ETAPA',case_id,
+                  {'accion':accion,'etapa':stage,
+                   'destino':next_user.email if next_user else None})
         db.commit()
     except BusinessError as exc:
-        db.rollback();return templates.TemplateResponse(request,'workflow.html',ctx(request,db,
-           case=case,mode='seguimiento',options=list(FOLLOWUP_ACTIONS),error=str(exc)),status_code=400)
+        db.rollback();return _workflow_page(request,db,case,'seguimiento',str(exc),400)
     return redirect('/casos/'+quote(case_id))
+
 
 @app.get('/casos/{case_id}/abogados')
 def legal_form(request:Request,case_id:str,db:Session=Depends(db_session)):
-    require_permission(request,db,'juridica');case=db.get(Case,case_id)
-    if not case:raise HTTPException(404)
-    if case.current_status in ARCHIVED_STATUSES:
-        return redirect('/casos/'+quote(case_id))
-    return render(request,db,'workflow.html',case=case,mode='abogados',options=LEGAL_OUTCOMES,error=None)
+    u=require_permission(request,db,'juridica');case=_open_stage_case(db,case_id)
+    if case is None:return redirect('/casos/'+quote(case_id))
+    require_stage_assignment(db,case,u,'juridica')
+    return _workflow_page(request,db,case,'abogados')
+
 
 @app.post('/casos/{case_id}/abogados')
 def legal_post(request:Request,case_id:str,csrf:str=Form(...),tipo_revision:str=Form(...),
                proveedor:str=Form(...),resultado:str=Form(...),observaciones:str=Form(...),
                db:Session=Depends(db_session)):
     u=require_permission(request,db,'juridica');check_csrf(request,csrf)
-    case=db.get(Case,case_id)
-    if not case:raise HTTPException(404)
-    try:apply_legal(db,case,tipo_revision,proveedor,resultado,observaciones,u.email);db.commit()
+    case=_open_stage_case(db,case_id)
+    if case is None:raise HTTPException(409,'El expediente ya finalizó.')
+    require_stage_assignment(db,case,u,'juridica')
+    try:
+        apply_legal(db,case,tipo_revision,proveedor,resultado,observaciones,u.email)
+        stage='seguimiento' if resultado=='Aprobado' else 'administracion'
+        transfer_stage(db,case,stage)
+        adjust_new_event_owner(db,case)
+        audit(db,u.email,'TRASLADO_ETAPA',case_id,{'etapa':stage,'resultado':resultado})
+        db.commit()
     except BusinessError as exc:
-        db.rollback();return templates.TemplateResponse(request,'workflow.html',ctx(request,db,
-           case=case,mode='abogados',options=LEGAL_OUTCOMES,error=str(exc)),status_code=400)
+        db.rollback();return _workflow_page(request,db,case,'abogados',str(exc),400)
     return redirect('/casos/'+quote(case_id))
+
+
+@app.post('/casos/{case_id}/redistribuir')
+def admin_redistribute(request:Request,case_id:str,csrf:str=Form(...),
+                       destino_usuario_id:int=Form(...),gestion:str=Form(...),
+                       db:Session=Depends(db_session)):
+    admin=require_user(request,db,['admin']);check_csrf(request,csrf)
+    case=_open_stage_case(db,case_id)
+    if case is None:raise HTTPException(409,'No se redistribuye un caso cerrado.')
+    if stage_for(case)!='administracion':
+        raise HTTPException(409,'Este caso no está en la bandeja de redistribución.')
+    if gestion not in ('revision','segunda_revision','juridica','seguimiento'):
+        raise HTTPException(400,'Etapa de redistribución no válida.')
+    try:
+        target=validate_target(db,destino_usuario_id,gestion)
+        if gestion=='revision':
+            case.current_status='EN_PRIMERA_REVISION'
+        elif gestion=='segunda_revision':
+            case.current_status='ENVIADA_A_SEGUNDA_REVISION'
+        elif gestion=='juridica':
+            if not (case.requires_legal or case.requires_technical):
+                raise BusinessError('El caso no tiene revisión jurídica o técnica habilitada.')
+            case.current_status=('EN_FIRMA_REVISORA_JURIDICA' if case.requires_legal else
+                                 'EN_FIRMA_REVISORA_TECNICA')
+        if gestion=='seguimiento':
+            assign_control(db,case,target.id)
+            transfer_stage(db,case,'seguimiento')
+        else:
+            transfer_stage(db,case,gestion,target.id)
+        add_event(db,case,'REDISTRIBUCION_ADMIN',admin.email,
+                  f'Reasignado a {target.name} ({gestion})',role='Administración')
+        audit(db,admin.email,'REDISTRIBUCION_ADMIN',case_id,
+              {'gestion':gestion,'destinatario':target.email})
+        db.commit()
+    except BusinessError as exc:
+        db.rollback();raise HTTPException(400,str(exc))
+    return redirect('/casos/'+quote(case_id))
+
+
+@app.post('/casos/{case_id}/control')
+def admin_change_control(request:Request,case_id:str,csrf:str=Form(...),
+                         destino_usuario_id:int=Form(...),
+                         db:Session=Depends(db_session)):
+    admin=require_user(request,db,['admin']);check_csrf(request,csrf)
+    case=_open_stage_case(db,case_id)
+    if case is None:raise HTTPException(409,'No se asigna control a un expediente cerrado.')
+    try:
+        target=assign_control(db,case,destino_usuario_id)
+        add_event(db,case,'CAMBIO_TITULAR_CONTROL',admin.email,
+                  f'Control y seguimiento asignado a {target.name}',role='Administración')
+        audit(db,admin.email,'CAMBIO_TITULAR_CONTROL',case_id,{'destinatario':target.email})
+        db.commit()
+    except BusinessError as exc:
+        db.rollback();raise HTTPException(400,str(exc))
+    return redirect('/casos/'+quote(case_id))
+
 
 @app.get('/radicacion')
 def rad_contracts(request:Request,q:str='',page:int=1,year:int=2026,db:Session=Depends(db_session)):
