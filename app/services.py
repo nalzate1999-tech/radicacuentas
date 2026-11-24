@@ -68,19 +68,22 @@ def parse_money(value):
     except InvalidOperation:return None
 
 def sla_deadline(db, received_at, special=False):
-    """3/8 días hábiles; fecha de recepción cuenta si llegó entre las 08:00 y 15:00."""
-    dt=received_at if received_at.tzinfo else received_at.replace(tzinfo=BOGOTA)
-    local=dt.astimezone(BOGOTA)
-    days=8 if special else 3
-    holidays={x[0] for x in db.execute(select(Holiday.day)).all()}
-    def business(d): return d.weekday()<5 and d not in holidays
-    count=1 if business(local.date()) and 8<=local.hour<15 else 0
-    if local.hour==15 and local.minute==0 and business(local.date()):count=1
-    cur=local.date()
-    while count<days:
-        cur+=timedelta(days=1)
-        if business(cur):count+=1
-    return cur
+    """Vencimiento: 3 u 8 dias habiles DESDE el siguiente dia habil al envio.
+
+    La fecha del envio no consume un dia del plazo, independientemente
+    de la hora. Los festivos nacionales registrados quedan excluidos.
+    """
+    dt = received_at if received_at.tzinfo else received_at.replace(tzinfo=BOGOTA)
+    local = dt.astimezone(BOGOTA)
+    days = 8 if special else 3
+    holidays = {x[0] for x in db.execute(select(Holiday.day)).all()}
+    current = local.date()
+    counted = 0
+    while counted < days:
+        current += timedelta(days=1)
+        if current.weekday() < 5 and current not in holidays:
+            counted += 1
+    return current
 
 def sla_color(case, today=None):
     if not case.sla_due or case.current_status in STOP_STATUSES:return 'Sin SLA'
@@ -100,10 +103,18 @@ def add_event(db,case,kind,actor,observations='',role='',status=None,owner=None,
     case.last_observation=observations or kind
     return e
 
-def change_status(db,case,status,owner):
-    case.current_status=status
-    case.current_owner=owner
-    case.sla_due = None if status in STOP_STATUSES else sla_deadline(db,utcnow(),case.special)
+def change_status(db, case, status, owner):
+    """Preserva el vencimiento del ciclo activo al cambiar de etapa."""
+    case.current_status = status
+    case.current_owner = owner
+    if status in STOP_STATUSES:
+        case.sla_due = None
+    elif case.sla_due is None and status in (
+        'EN_PRIMERA_REVISION', 'EN_FIRMA_REVISORA_TECNICA',
+        'EN_FIRMA_REVISORA_JURIDICA', 'ENVIADA_A_SEGUNDA_REVISION'
+    ):
+        # El primer envio a un revisor activa el plazo inicial.
+        case.sla_due = sla_deadline(db, utcnow(), case.special)
 
 def queue_notification(db,case_id,to_email,kind,subject,body):
     if not to_email or '@' not in to_email:return
@@ -153,7 +164,8 @@ def create_case(db,data,actor):
         raise BusinessError('Tipo de contratista no reconocido.')
     if case.sent_by not in ('Contratista','Supervisor'):
         raise BusinessError('Seleccione quién envía la cuenta.')
-    case.sla_due=sla_deadline(db,now,case.special)
+    # El plazo comienza con el primer envio, nunca con el registro.
+    case.sla_due=None
     db.add(case)
     for t in SUBTASK_TYPES:
         applies=((t=='REVISOR' and case.requires_reviewer) or
@@ -206,11 +218,22 @@ def apply_followup(db,case,action,observations,actor,multi=False,fronts=None,clo
     if multi and not fronts:
         raise BusinessError('Seleccione los frentes paralelos.')
     st,owner,ev=FOLLOWUP_ACTIONS[action]
+    former_status = case.current_status
+    # Una subsanacion formal y su reenvio generan un nuevo ciclo completo.
+    resubmission = (
+        former_status in ('EN_AJUSTES_CONTRATISTA_SUPERVISOR',
+                          'RETOMADA_EN_SEGUIMIENTO',
+                          'DEVUELTA_POR_FINANCIERA',
+                          'DEVUELTA_POR_MESA_DIRECTIVA')
+        and action.startswith('Enviado a ')
+    )
     if action=='Enviado a firma revisora jurídica' and not case.requires_legal:
         raise BusinessError('Este caso no tiene revisión jurídica habilitada.')
     if action=='Enviado a firma revisora técnica' and not case.requires_technical:
         raise BusinessError('Este caso no tiene revisión técnica habilitada.')
     change_status(db,case,st,owner)
+    if resubmission:
+        case.sla_due = sla_deadline(db, utcnow(), case.special)
     if action=='Cerrar':
         try:case.finance_closed_at=date.fromisoformat(closed_date)
         except ValueError:raise BusinessError('Fecha de cierre inválida.')
