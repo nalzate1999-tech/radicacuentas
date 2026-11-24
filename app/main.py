@@ -539,14 +539,33 @@ def case_detail(request:Request,case_id:str,event_page:int=1,db:Session=Depends(
     tasks=db.scalars(select(Subtask).where(Subtask.case_id==case_id).order_by(Subtask.kind)).all()
     responses=db.scalars(select(FormResponse).where(FormResponse.case_id==case_id)
                          .order_by(FormResponse.submitted_at.desc()).limit(15)).all()
+    user=require_user(request,db)
+    control=db.scalar(select(User.name).join(CaseAssignment,CaseAssignment.user_id==User.id)
+                      .where(CaseAssignment.case_id==case_id,
+                             CaseAssignment.workflow=='seguimiento').limit(1))
+    current_assignee=db.scalar(select(User.name).join(CaseAssignment,CaseAssignment.user_id==User.id)
+                        .where(CaseAssignment.case_id==case_id,
+                               CaseAssignment.workflow==stage_for(case)).limit(1))
+    is_followup=(user.role=='admin' or assigned_to(db,case_id,user.id,'seguimiento'))
+    can_review=(stage_for(case)=='revision' and can(user,'revision') and
+                (user.role=='admin' or assigned_to(db,case_id,user.id,'revision')))
+    can_second=(stage_for(case)=='segunda_revision' and can(user,'segunda_revision') and
+                (user.role=='admin' or assigned_to(db,case_id,user.id,'segunda_revision')))
+    can_legal=(stage_for(case)=='juridica' and can(user,'juridica') and
+               (user.role=='admin' or assigned_to(db,case_id,user.id,'juridica')))
     return render(request,db,'case_detail.html',case=case,events=events,tasks=tasks,
                   responses=responses,event_page=event_page,event_pages=max(1,math.ceil(n_events/60)),
-                  total_events=n_events,sla_color=sla_color,age=_case_age_map(db,[case])[case_id])
+                  total_events=n_events,sla_color=sla_color,age=_case_age_map(db,[case])[case_id],
+                  stage=stage_for(case),control_name=control,stage_assignee=current_assignee,
+                  can_followup=is_followup and can(user,'seguimiento'),
+                  can_review=can_review,can_second=can_second,can_legal=can_legal,
+                  admin=user.role=='admin',controllers=eligible_users(db,'seguimiento'))
 
 def _workflow_page(request,db,case,mode,error=None,status_code=200):
     choices=(list(FOLLOWUP_ACTIONS)+['Registrar novedad de control']
              if mode=='seguimiento' and stage_for(case)=='seguimiento'
-             else ['Registrar novedad de control'] if mode=='seguimiento'
+             else ['Registrar novedad de control','Cerrar','Devuelta por financiera',
+                   'Respuesta de mesa directiva'] if mode=='seguimiento'
              else [x for x in REVIEW_ACTIONS if x!='Enviado a segunda revisión']
                   if mode=='segunda' else
                   list(REVIEW_ACTIONS) if mode=='revisor' else LEGAL_OUTCOMES)
@@ -647,8 +666,10 @@ def follow_post(request:Request,case_id:str,csrf:str=Form(...),accion:str=Form(.
     case=_open_stage_case(db,case_id)
     if case is None:raise HTTPException(409,'El expediente ya finalizó.')
     followup_access(db,case,u)
-    if accion!='Registrar novedad de control' and stage_for(case)!='seguimiento':
-        raise HTTPException(409,'Sólo puede registrar novedades de control mientras el caso esté en otra etapa.')
+    if stage_for(case)!='seguimiento' and accion not in (
+            'Registrar novedad de control','Cerrar','Devuelta por financiera',
+            'Respuesta de mesa directiva'):
+        raise HTTPException(409,'El caso está en otra etapa. Registre una novedad de control o un retorno válido.')
     try:
         if not observaciones.strip():
             raise BusinessError('Las observaciones son obligatorias.')
@@ -702,6 +723,19 @@ def legal_post(request:Request,case_id:str,csrf:str=Form(...),tipo_revision:str=
     return redirect('/casos/'+quote(case_id))
 
 
+@app.get('/casos/{case_id}/redistribuir')
+def admin_redistribute_form(request:Request,case_id:str,db:Session=Depends(db_session)):
+    require_user(request,db,['admin'])
+    case=_open_stage_case(db,case_id)
+    if case is None:return redirect('/casos/'+quote(case_id))
+    if stage_for(case)!='administracion':
+        raise HTTPException(409,'La cuenta ya no requiere redistribución.')
+    control=db.scalar(select(CaseAssignment.user_id).where(
+        CaseAssignment.case_id==case_id,CaseAssignment.workflow=='seguimiento').limit(1))
+    return render(request,db,'redistribute.html',case=case,
+                  destinations=stage_destination_lists(db),control_id=control)
+
+
 @app.post('/casos/{case_id}/redistribuir')
 def admin_redistribute(request:Request,case_id:str,csrf:str=Form(...),
                        destino_usuario_id:int=Form(...),gestion:str=Form(...),
@@ -725,7 +759,8 @@ def admin_redistribute(request:Request,case_id:str,csrf:str=Form(...),
             case.current_status=('EN_FIRMA_REVISORA_JURIDICA' if case.requires_legal else
                                  'EN_FIRMA_REVISORA_TECNICA')
         if gestion=='seguimiento':
-            assign_control(db,case,target.id)
+            if not assigned_to(db,case.id_caso,target.id,'seguimiento'):
+                raise BusinessError('Seleccione el responsable permanente ya registrado. Para cambiarlo, utilice Cambiar titular en el expediente.')
             transfer_stage(db,case,'seguimiento')
         else:
             transfer_stage(db,case,gestion,target.id)
