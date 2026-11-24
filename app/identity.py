@@ -8,7 +8,7 @@ import unicodedata
 from sqlalchemy import delete, select
 from .models import User, UserAlias, Case, CaseAssignment, Subtask
 
-WORKFLOWS = ('revision', 'seguimiento', 'juridica')
+WORKFLOWS = ('revision', 'segunda_revision', 'seguimiento', 'juridica')
 
 
 def identity_key(value):
