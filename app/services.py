@@ -224,6 +224,9 @@ def apply_followup(db,case,action,observations,actor,multi=False,fronts=None,clo
     if action=='Cerrar' and not closed_date:
         raise BusinessError('La fecha real de cierre financiera es obligatoria al cerrar.')
     if action == 'Cerrar':
+        if case.current_status in ('EN_PRIMERA_REVISION', 'ENVIADA_A_SEGUNDA_REVISION',
+                                   'EN_FIRMA_REVISORA_JURIDICA', 'EN_FIRMA_REVISORA_TECNICA'):
+            raise BusinessError('No se puede cerrar mientras hay una etapa de revisión en curso.')
         required = [kind for kind, applies in (
             ('REVISOR', case.requires_reviewer), ('TECNICA', case.requires_technical),
             ('JURIDICA', case.requires_legal)) if applies]
