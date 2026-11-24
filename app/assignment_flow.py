@@ -136,6 +136,11 @@ def stage_after_review(outcome):
 def adjust_new_event_owner(db, case):
     """Conserva el estado original del evento y registra el destinatario real."""
     from .models import Event
-    for item in db.new:
-        if isinstance(item, Event) and item.case_id == case.id_caso:
-            item.resulting_owner = case.current_owner
+    # SQLAlchemy puede vaciar db.new durante la transferencia de asignación.
+    # Buscar el último evento escrito por el movimiento, dentro de la transacción.
+    db.flush()
+    event = db.scalar(select(Event).where(
+        Event.case_id == case.id_caso, Event.source == 'web',
+    ).order_by(Event.id.desc()).limit(1))
+    if event:
+        event.resulting_owner = case.current_owner
