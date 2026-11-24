@@ -24,10 +24,13 @@ from .database import db_session, engine, SessionLocal
 from .models import (Base, User, Case, Event, Subtask, RadContract, RadMonth,
                      ImportBatch, ImportIssue, Personnel, FormResponse, Audit, Notification, AuthAttempt, UserAlias, CaseAssignment)
 from .services import (BOGOTA, FOLLOWUP_ACTIONS, REVIEW_ACTIONS, LEGAL_OUTCOMES,
-                       REVIEWERS, PROVIDERS, SUBTASK_TYPES, BusinessError, create_case,
+                       REVIEWERS, PROVIDERS, SUBTASK_TYPES, BusinessError, create_case, add_event,
                        apply_followup, apply_review, apply_legal, sla_color, audit, utcnow, STOP_STATUSES)
 from .case_metrics import case_age_info
 from .identity import rebuild_assignments, replace_aliases, parse_aliases, WORKFLOWS
+from .assignment_flow import (eligible_users, validate_target, assigned_to, assign_control,
+                              transfer_stage, stage_for, stage_after_followup,
+                              stage_after_review, adjust_new_event_owner)
 from .analytics import report_data
 from .work_queue import (queue_query, authorized_workflows, recommended_workflow,
                          WORKFLOW_LABELS)
@@ -44,7 +47,8 @@ ph=PasswordHasher(time_cost=3,memory_cost=65536,parallelism=4)
 ROLES={'admin':'Administrador','seguimiento':'Seguimiento','revisor':'Revisor','abogados':'Firmas jurídica/técnica','consulta':'Consulta'}
 FORM_PERMISSIONS={
     'registro':'Registro de cuentas',
-    'revision':'Revisión de supervisor',
+    'revision':'Primera revisión',
+    'segunda_revision':'Segunda revisión (usuario específico)',
     'seguimiento':'Gestión y seguimiento',
     'juridica':'Revisión jurídica y técnica',
 }
@@ -373,6 +377,23 @@ def _case_search(token: str):
     return or_(*in_case, in_task)
 
 
+def stage_destination_lists(db):
+    return {name:eligible_users(db,name)
+            for name in ('revision','segunda_revision','juridica')}
+
+
+def require_stage_assignment(db, case, user, stage):
+    if stage_for(case) != stage:
+        raise HTTPException(409,'La etapa del expediente cambió. Actualice su bandeja.')
+    if user.role != 'admin' and not assigned_to(db,case.id_caso,user.id,stage):
+        raise HTTPException(403,'Esta etapa está asignada a otra persona.')
+
+
+def followup_access(db, case, user):
+    if user.role != 'admin' and not assigned_to(db,case.id_caso,user.id,'seguimiento'):
+        raise HTTPException(403,'No es la persona titular de control y seguimiento.')
+
+
 @app.get('/bandeja')
 def work_inbox(request:Request,q:str='',gestion:str='',vista:str='',sla:str='',page:int=1,
                db:Session=Depends(db_session)):
@@ -383,12 +404,13 @@ def work_inbox(request:Request,q:str='',gestion:str='',vista:str='',sla:str='',p
         raise HTTPException(403,'No tiene formularios de gestion autorizados.')
     if gestion and gestion not in allowed:
         raise HTTPException(403,'No tiene autorizado ese formulario.')
-    scope=vista or ('equipo' if u.role=='admin' else 'mios')
-    if scope not in ('mios','equipo'):
+    scope=vista or ('administracion' if u.role=='admin' else 'mios')
+    if scope not in ('mios','equipo','control','administracion'):
         raise HTTPException(400,'Vista de bandeja no reconocida.')
     if sla and sla not in SLA_FILTERS:
         raise HTTPException(400,'Estado SLA no reconocido.')
-    query=queue_query(perms,u,workflow=gestion,scope=scope)
+    try:query=queue_query(perms,u,workflow=gestion,scope=scope)
+    except PermissionError as exc:raise HTTPException(403,str(exc))
     cleaned=' '.join(q.split())[:140]
     for token in cleaned.split(' ')[:6] if cleaned else []:
         query=query.where(_case_search(token))
@@ -403,18 +425,21 @@ def work_inbox(request:Request,q:str='',gestion:str='',vista:str='',sla:str='',p
     rows=db.scalars(query.order_by(priority,Case.sla_due.asc().nulls_last(),
                 Case.registered_at.desc(),Case.id_caso.desc())
                 .limit(per_page).offset((page-1)*per_page)).all()
-    actions={c.id_caso:recommended_workflow(c,perms,gestion) for c in rows}
+    actions={c.id_caso:('redistribuir' if scope=='administracion' else
+                           'seguimiento' if scope=='control' else
+                           recommended_workflow(c,perms,gestion)) for c in rows}
     return render(request,db,'inbox.html',rows=rows,total=total,page=page,
                   pages=max(1,math.ceil(total/per_page)),gestion=gestion,vista=scope,
                   q=cleaned,sla=sla,allowed_workflows=allowed,
                   workflow_labels=WORKFLOW_LABELS,actions=actions,sla_color=sla_color,
+                  admin=(u.role=='admin'),can_control=('seguimiento' in perms),
                   case_age=_case_age_map(db,rows))
 
 @app.get('/casos')
 def cases(request:Request,q:str='',estado:str='',periodo:str='',accion:str='',
           vista:str='todos',sla:str='',page:int=1,db:Session=Depends(db_session)):
     require_permission(request,db,'casos')
-    if accion and accion not in ('revision','seguimiento','juridica'):
+    if accion and accion not in ('revision','segunda_revision','seguimiento','juridica'):
         raise HTTPException(400,'Formulario no reconocido.')
     if accion:require_permission(request,db,accion)
     if vista not in ('todos', 'pendientes', 'cerrados'):
@@ -462,20 +487,22 @@ def registration_directory(db):
     followup_names.update(u.name for u in users if 'seguimiento' in (u.form_permissions or []))
     reviewer_names=set(REVIEWERS)
     reviewer_names.update(u.name for u in users if 'revision' in (u.form_permissions or []))
-    return sorted(followup_names), sorted(reviewer_names)
+    return sorted(followup_names), sorted(reviewer_names), eligible_users(db,'seguimiento')
 
 
 @app.get('/casos/nuevo')
 def register_form(request:Request,db:Session=Depends(db_session)):
     require_permission(request,db,'registro')
-    names,reviewers=registration_directory(db)
-    return render(request,db,'register.html',assignees=names,reviewers=reviewers,error=None,form={})
+    names,reviewers,controllers=registration_directory(db)
+    return render(request,db,'register.html',assignees=names,reviewers=reviewers,
+                  controllers=controllers,error=None,form={})
 
 @app.post('/casos/nuevo')
 def register(request:Request,csrf:str=Form(...),contractor_type:str=Form(...),
              contractor_name:str=Form(...),document:str=Form(...),contract_no:str=Form(...),
              period:str=Form(...),amount:str=Form(...),contractor_email:str=Form(...),
-             contractor_phone:str=Form(''),followup_assignee:str=Form(...),
+             contractor_phone:str=Form(''),followup_assignee:str=Form(''),
+             control_user_id:int=Form(0),
              reviewer:list[str]=Form([]),special:str=Form('No'),sent_by:str=Form(...),
              requires_reviewer:str=Form('No'),requires_technical:str=Form('No'),
              requires_legal:str=Form('No'),db:Session=Depends(db_session)):
@@ -483,16 +510,19 @@ def register(request:Request,csrf:str=Form(...),contractor_type:str=Form(...),
     data=locals().copy()
     data['reviewer']=', '.join(reviewer)
     try:
+        controller=validate_target(db,control_user_id,'seguimiento')
+        data['followup_assignee']=controller.name
         case=create_case(db,data,u.email)
         db.flush()
+        assign_control(db,case,controller.id)
         rebuild_assignments(db, case_ids=[case.id_caso])
         db.commit()
         return redirect('/casos/'+quote(case.id_caso))
     except (BusinessError,IntegrityError) as e:
         db.rollback()
-        names,reviewers=registration_directory(db)
+        names,reviewers,controllers=registration_directory(db)
         return templates.TemplateResponse(request,'register.html',ctx(request,db,
-            assignees=names,reviewers=reviewers,
+            assignees=names,reviewers=reviewers,controllers=controllers,
             error=str(e) if isinstance(e,BusinessError) else 'Registro duplicado o error de integridad.',
             form=data),status_code=400)
 
