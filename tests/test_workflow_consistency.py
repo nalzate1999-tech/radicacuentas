@@ -46,6 +46,10 @@ def test_complete_flow_has_correct_fronts_and_no_unfinished_closure():
         apply_followup(db,case,'Enviado a revisor','QA','qa')
         sub=db.get(Subtask,f'{case.id_caso}-REVISOR')
         assert sub.result is None and sub.closed_at is None
+        apply_review(db,case,'Enviado a segunda revisión','QA','qa')
+        db.flush()
+        with pytest.raises(BusinessError,match='etapa de revisión en curso'):
+            apply_followup(db,case,'Cerrar','QA','qa',closed_date='2026-11-24')
         apply_review(db,case,'Enviado a financiera','QA','qa')
         db.flush()
         apply_followup(db,case,'Cerrar','QA','qa',closed_date='2026-11-24')
