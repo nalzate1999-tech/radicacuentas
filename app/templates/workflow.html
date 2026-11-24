@@ -1,14 +1,21 @@
 {% extends 'base.html' %}{% block title %}Gestión {{ mode }}{% endblock %}{% block content %}
 <div class="workflow-back"><a href="/bandeja">&larr; Volver a mi bandeja</a><span>Reporte de novedad &middot; {{ case.id_caso }}</span></div>
-<div class="pagehead"><div><div class="eyebrow">FORMULARIO {{ '02 · SUPERVISOR/REVISOR' if mode=='revisor' else ('03 · SEGUIMIENTO' if mode=='seguimiento' else '04 · ABOGADOS') }}</div>
-<h1>{{ 'Revisión del supervisor' if mode=='revisor' else ('Gestión de envíos' if mode=='seguimiento' else 'Revisión jurídica o técnica') }}</h1><p>Expediente {{ case.id_caso }} · {{ case.contractor_name }}</p></div><a href="/casos/{{ case.id_caso }}" class="btn">← Volver al caso</a></div>
+<div class="pagehead"><div><div class="eyebrow">FORMULARIO {{ '02 · PRIMERA REVISIÓN' if mode=='revisor' else ('02B · SEGUNDA REVISIÓN' if mode=='segunda' else ('03 · SEGUIMIENTO' if mode=='seguimiento' else '04 · ABOGADOS')) }}</div>
+<h1>{{ 'Primera revisión' if mode=='revisor' else ('Segunda revisión' if mode=='segunda' else ('Control y gestión de envíos' if mode=='seguimiento' else 'Revisión jurídica o técnica')) }}</h1><p>Expediente {{ case.id_caso }} · {{ case.contractor_name }}</p></div><a href="/casos/{{ case.id_caso }}" class="btn">← Volver al caso</a></div>
 {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
-<form class="panel narrow" action="/casos/{{ case.id_caso }}/{{ mode }}" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"/>
+<form class="panel narrow" action="/casos/{{ case.id_caso }}/{{ 'segunda-revision' if mode=='segunda' else mode }}" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"/>
 <div class="field"><label>Correo de quien realiza el movimiento</label><input type="email" value="{{ user.email }}" readonly/><small>Se toma automáticamente de la cuenta autenticada.</small></div>
 <div class="field"><label>ID_CASO</label><input value="{{ case.id_caso }}" readonly/></div>
 {% if mode=='abogados' %}<div class="field"><label>Tipo de revisión *</label><select name="tipo_revision" required id="revision_type"><option value="">Seleccionar</option><option>Técnica</option><option>Jurídica</option></select></div>
 <div class="field"><label>Proveedor *</label><select name="proveedor" required id="provider"><option value="">Seleccionar</option><option>Soluciones Territoriales</option><option>Velázquez Osorio</option></select></div>{% endif %}
 <div class="field"><label>{{ 'Acción *' if mode=='seguimiento' else 'Resultado *' }}</label><select name="{{ 'accion' if mode=='seguimiento' else 'resultado' }}" id="action_select" required><option value="">Seleccionar</option>{% for op in options %}<option value="{{ op }}">{{ op }}</option>{% endfor %}</select></div>
+{% if mode in ['revisor','seguimiento'] %}<div class="field" id="destination_wrap" hidden>
+<label for="destination_user">¿A qué usuario se entrega esta etapa? *</label>
+<select name="destino_usuario_id" id="destination_user" disabled><option value="">Selecciona el destinatario autorizado</option>
+{% for workflow,label in [('revision','Primera revisión'),('segunda_revision','Segunda revisión'),('juridica','Revisión jurídica/técnica')] %}
+{% for person in destinations[workflow] %}<option value="{{ person.id }}" data-workflow="{{ workflow }}" hidden>{{ person.name }} · {{ person.email }}</option>{% endfor %}
+{% endfor %}
+</select><small>Después del envío, la tarea desaparece de tu bandeja y pasa a la del usuario seleccionado. Control y seguimiento mantiene visibilidad.</small></div>{% endif %}
 {% if mode=='seguimiento' %}<div class="field" id="date_wrap" hidden><label>Fecha real de cierre financiera *</label><input type="date" id="date_input" name="fecha_cierre"/></div>
 <div class="field"><label>¿Este envío aplica a más de un frente? *</label><select name="frente_multiple" id="multi_select"><option>No</option><option>Sí</option></select></div>
 <div class="field" id="fronts_wrap" hidden><label>Frentes paralelos *</label><div class="checks"><label class="checkline"><input type="checkbox" name="frentes" value="REVISOR"/> Revisor</label>
@@ -16,5 +23,25 @@
 <label class="checkline"><input type="checkbox" name="frentes" value="JURIDICA"/> Firma revisora jurídica</label></div></div>{% endif %}
 <div class="field"><label>Observaciones *</label><textarea name="observaciones" rows="5" required maxlength="5000" placeholder="Describa el resultado y la gestión realizada"></textarea></div>
 <div class="form-actions"><a href="/casos/{{ case.id_caso }}" class="btn">Cancelar</a><button class="btn primary" type="submit">Guardar movimiento</button></div></form>
-<script>document.addEventListener('DOMContentLoaded',()=>{const a=document.getElementById('action_select'),dateWrap=document.getElementById('date_wrap'),dateInput=document.getElementById('date_input');if(a&&dateWrap){function t(){let closed=a.value==='Cerrar';dateWrap.hidden=!closed;dateInput.required=closed}a.addEventListener('change',t);t()}const m=document.getElementById('multi_select'),f=document.getElementById('fronts_wrap');if(m&&f){function t(){f.hidden=m.value!=='Sí'}m.addEventListener('change',t);t()}const r=document.getElementById('revision_type'),p=document.getElementById('provider');if(r&&p){r.addEventListener('change',()=>{p.value=r.value==='Técnica'?'Soluciones Territoriales':r.value==='Jurídica'?'Velázquez Osorio':''})}});</script>
+<script>document.addEventListener('DOMContentLoaded',()=>{
+const action=document.getElementById('action_select'),w=document.getElementById('destination_wrap'),target=document.getElementById('destination_user');
+const destinations={'Enviado a revisor':'revision','Enviado a segunda revisión':'segunda_revision',
+'Enviado a firma revisora jurídica':'juridica','Enviado a firma revisora técnica':'juridica'};
+function syncDestination(){if(!action||!w||!target)return;
+const workflow=destinations[action.value]||'';
+w.hidden=!workflow;target.disabled=!workflow;target.required=!!workflow;
+for(const option of target.options){if(!option.value)continue;
+const show=option.dataset.workflow===workflow;option.hidden=!show;option.disabled=!show;}
+if(target.selectedOptions.length&&target.selectedOptions[0].disabled)target.value='';
+}
+if(action){action.addEventListener('change',syncDestination);syncDestination();}
+const dateWrap=document.getElementById('date_wrap'),dateInput=document.getElementById('date_input');
+if(action&&dateWrap){function toggleDate(){const closed=action.value==='Cerrar';dateWrap.hidden=!closed;dateInput.required=closed}
+action.addEventListener('change',toggleDate);toggleDate();}
+const multi=document.getElementById('multi_select'),fronts=document.getElementById('fronts_wrap');
+if(multi&&fronts){function toggleFronts(){fronts.hidden=multi.value!=='Sí'}
+multi.addEventListener('change',toggleFronts);toggleFronts();}
+const revision=document.getElementById('revision_type'),provider=document.getElementById('provider');
+if(revision&&provider){revision.addEventListener('change',()=>{provider.value=revision.value==='Técnica'?'Soluciones Territoriales':revision.value==='Jurídica'?'Velázquez Osorio':''})}
+});</script>
 {% endblock %}
