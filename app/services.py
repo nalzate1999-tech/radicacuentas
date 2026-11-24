@@ -17,7 +17,6 @@ FOLLOWUP_ACTIONS = {
     'Enviado a firma revisora jurídica': ('EN_FIRMA_REVISORA_JURIDICA','Firma Jurídica','ENVIADO_A_FIRMA_REVISORA_JURIDICA'),
     'Enviado a firma revisora técnica': ('EN_FIRMA_REVISORA_TECNICA','Firma Técnica','ENVIADO_A_FIRMA_REVISORA_TECNICA'),
     'Enviado a segunda revisión': ('ENVIADA_A_SEGUNDA_REVISION','Revisor','ENVIADO_A_SEGUNDA_REVISION'),
-    'Enviado para firma Directora': ('EN_FIRMA_DIRECTORA','DIRECTORA','ENVIADO_PARA_FIRMA_DIRECTORA'),
     'Devuelto a mesa directiva': ('EN_MESA_DIRECTIVA','Mesa Directiva','ENVIADO_A_MESA_DIRECTIVA'),
     'Enviado financiera': ('ENVIADA_A_FINANCIERA','Financiera','ENVIADO_A_FINANCIERA'),
     'Respuesta de mesa directiva': ('DEVUELTA_POR_MESA_DIRECTIVA','Seguimiento','DEVUELTA_POR_MESA_DIRECTIVA'),
@@ -27,7 +26,6 @@ FOLLOWUP_ACTIONS = {
 REVIEW_ACTIONS = {
     'Requiere ajustes': ('EN_AJUSTES_CONTRATISTA_SUPERVISOR','Supervisor_Contratista','REQUIERE_AJUSTES_REVISOR'),
     'Enviado a segunda revisión': ('ENVIADA_A_SEGUNDA_REVISION','Revisor','ENVIADO_A_SEGUNDA_REVISION'),
-    'Enviado a firma Directora': ('EN_FIRMA_DIRECTORA','DIRECTORA','ENVIADO_PARA_FIRMA_DIRECTORA'),
     'Enviado a financiera': ('ENVIADA_A_FINANCIERA','Financiera','ENVIADO_A_FINANCIERA'),
 }
 LEGAL_OUTCOMES = ['Aprobado','Requiere ajustes']
