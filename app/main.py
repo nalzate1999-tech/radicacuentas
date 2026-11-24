@@ -425,9 +425,11 @@ def work_inbox(request:Request,q:str='',gestion:str='',vista:str='',sla:str='',p
     rows=db.scalars(query.order_by(priority,Case.sla_due.asc().nulls_last(),
                 Case.registered_at.desc(),Case.id_caso.desc())
                 .limit(per_page).offset((page-1)*per_page)).all()
-    actions={c.id_caso:('redistribuir' if scope=='administracion' else
-                           'seguimiento' if scope=='control' else
-                           recommended_workflow(c,perms,gestion)) for c in rows}
+    actions={c.id_caso:(
+        'redistribuir' if scope=='administracion' else
+        'seguimiento' if scope=='control' else
+        None if scope=='equipo' else recommended_workflow(c,perms,gestion)
+    ) for c in rows}
     return render(request,db,'inbox.html',rows=rows,total=total,page=page,
                   pages=max(1,math.ceil(total/per_page)),gestion=gestion,vista=scope,
                   q=cleaned,sla=sla,allowed_workflows=allowed,
