@@ -61,7 +61,8 @@ def queue_query(perms, user, workflow='', scope='mios'):
     if scope == 'administracion':
         if user.role != 'admin':
             raise PermissionError('La redistribución corresponde a administración.')
-        return query.where(Case.current_owner == 'Administración')
+        return query.where(or_(Case.current_owner == 'Administración',
+                               Case.current_status == 'EN_AJUSTES_CONTRATISTA_SUPERVISOR'))
     if scope == 'control':
         if 'seguimiento' not in allowed:
             raise PermissionError('No tiene permiso de control y seguimiento.')
