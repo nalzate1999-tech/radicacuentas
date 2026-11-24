@@ -52,6 +52,8 @@ def assigned_to(db, case_id, user_id, workflow):
 def stage_for(case):
     if case.current_status in ('CERRADO', 'CERRADA', 'PAGADO', 'PAGADA'):
         return 'cerrado'
+    if case.current_status == 'EN_AJUSTES_CONTRATISTA_SUPERVISOR':
+        return 'administracion'
     owner = (case.current_owner or '').casefold()
     if 'administrac' in owner:
         return 'administracion'
