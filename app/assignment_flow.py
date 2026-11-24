@@ -117,7 +117,6 @@ def stage_after_followup(action):
         'Enviado a firma revisora jurídica': 'juridica',
         'Enviado a firma revisora técnica': 'juridica',
         'Enviado a Supervisor / Contratista': 'administracion',
-        'Enviado para firma Directora': 'externo',
         'Devuelto a mesa directiva': 'externo',
         'Enviado financiera': 'externo',
         'Respuesta de mesa directiva': 'seguimiento',
@@ -130,7 +129,6 @@ def stage_after_review(outcome):
     return {
         'Requiere ajustes': 'administracion',
         'Enviado a segunda revisión': 'segunda_revision',
-        'Enviado a firma Directora': 'externo',
         'Enviado a financiera': 'externo',
     }[outcome]
 
