@@ -1,6 +1,6 @@
 {% extends 'base.html' %}{% block title %}Gestión {{ mode }}{% endblock %}{% block content %}
 <div class="workflow-back"><a href="/bandeja">&larr; Volver a mi bandeja</a><span>Reporte de novedad &middot; {{ case.id_caso }}</span></div>
-<div class="pagehead"><div><div class="eyebrow">FORMULARIO {{ '02 · PRIMERA REVISIÓN' if mode=='revisor' else ('02B · SEGUNDA REVISIÓN' if mode=='segunda' else ('03 · SEGUIMIENTO' if mode=='seguimiento' else '04 · ABOGADOS')) }}</div>
+<div class="pagehead"><div><div class="eyebrow">FORMULARIO {{ '02 · PRIMERA REVISIÓN' if mode=='revisor' else ('03 · SEGUNDA REVISIÓN' if mode=='segunda' else ('04 · GESTIÓN Y SEGUIMIENTO' if mode=='seguimiento' else '05 · REVISIÓN JURÍDICA Y TÉCNICA')) }}</div>
 <h1>{{ 'Primera revisión' if mode=='revisor' else ('Segunda revisión' if mode=='segunda' else ('Control y gestión de envíos' if mode=='seguimiento' else 'Revisión jurídica o técnica')) }}</h1><p>Expediente {{ case.id_caso }} · {{ case.contractor_name }}</p></div><a href="/casos/{{ case.id_caso }}" class="btn">← Volver al caso</a></div>
 {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
 <form class="panel narrow" action="/casos/{{ case.id_caso }}/{{ 'segunda-revision' if mode=='segunda' else mode }}" method="post"><input type="hidden" name="csrf" value="{{ csrf }}"/>
