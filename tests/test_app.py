@@ -476,3 +476,101 @@ def test_identity_alias_collision_rejected():
     result=admin.post(f'/usuarios/{uid}/identidad',data={'csrf':token(page.text),
         'name':'Persona '+key,'aliases':'Administrador QA'})
     assert result.status_code==400
+
+
+def test_double_entry_queues_move_between_users():
+    """Seguimiento ve el caso siempre; quien entrega pierde su tarea de etapa."""
+    from app.models import CaseAssignment
+    from datetime import datetime, timezone
+    key=uuid.uuid4().hex[:8]
+    accounts={}
+    with SessionLocal.begin() as db:
+        for role, prefix, permissions in [
+            ('control','Carol', ['seguimiento','casos']),
+            ('first','Andrea', ['revision','casos']),
+            ('second','Allison', ['segunda_revision','casos']),
+        ]:
+            user=User(name=f'{prefix} {key}',email=f'{prefix.lower()}-{key}@example.org',
+                      password_hash=ph.hash('Contraseña-Muy-Segura-2026!'),
+                      role='consulta',active=True,form_permissions=permissions)
+            db.add(user);db.flush()
+            accounts[role]={'id':user.id,'email':user.email}
+    admin=client_as('qa@example.org')
+    case_page=admin.get('/casos/nuevo')
+    assert case_page.status_code==200
+    payload={'csrf':token(case_page.text),'contractor_type':'CC',
+             'contractor_name':'Recibo Doble Entrada '+key,'document':'9011'+key,
+             'contract_no':'DOBLE-'+key,'period':'202611',
+             'amount':'100000','contractor_email':'doble-'+key+'@example.org',
+             'control_user_id':str(accounts['control']['id']),
+             'reviewer':f'Andrea {key}','special':'No','sent_by':'Supervisor',
+             'requires_reviewer':'Sí','requires_technical':'No','requires_legal':'No'}
+    result=admin.post('/casos/nuevo',data=payload)
+    assert result.status_code==303,result.text[:300]
+    case_id=result.headers['location'].split('/')[-1]
+    carol=client_as(accounts['control']['email'])
+    andrea=client_as(accounts['first']['email'])
+    allison=client_as(accounts['second']['email'])
+    assert case_id in carol.get('/bandeja?vista=control').text
+    assert case_id in carol.get('/bandeja?vista=mios').text
+    assert case_id not in andrea.get('/bandeja').text
+
+    follow_page=carol.get(f'/casos/{case_id}/seguimiento')
+    assert follow_page.status_code==200
+    assert 'Enviado para firma Directora' not in follow_page.text
+    rejected=carol.post(f'/casos/{case_id}/seguimiento',data={
+        'csrf':token(follow_page.text),'accion':'Enviado para firma Directora',
+        'observaciones':'Nunca debe crearse esta etapa'})
+    assert rejected.status_code==400
+
+    result=carol.post(f'/casos/{case_id}/seguimiento',data={
+        'csrf':token(follow_page.text),'accion':'Enviado a revisor',
+        'observaciones':'Envío de prueba a Andrea',
+        'destino_usuario_id':str(accounts['first']['id'])})
+    assert result.status_code==303,result.text[:300]
+    assert case_id not in carol.get('/bandeja?vista=mios').text
+    assert case_id in carol.get('/bandeja?vista=control').text
+    assert case_id in andrea.get('/bandeja').text
+    assert case_id not in allison.get('/bandeja').text
+    assert andrea.get(f'/casos/{case_id}/revisor').status_code==200
+    assert allison.get(f'/casos/{case_id}/revisor').status_code==403
+
+    first_page=andrea.get(f'/casos/{case_id}/revisor')
+    second_action=andrea.post(f'/casos/{case_id}/revisor',data={
+        'csrf':token(first_page.text),'resultado':'Enviado a segunda revisión',
+        'observaciones':'Andrea entrega a Allison',
+        'destino_usuario_id':str(accounts['second']['id'])})
+    assert second_action.status_code==303,second_action.text[:300]
+    assert case_id not in andrea.get('/bandeja').text
+    assert case_id in allison.get('/bandeja').text
+    assert case_id in carol.get('/bandeja?vista=control').text
+    assert andrea.get(f'/casos/{case_id}/revisor').status_code==409
+    second_page=allison.get(f'/casos/{case_id}/segunda-revision')
+    assert second_page.status_code==200
+    assert 'Enviado a firma Directora' not in second_page.text
+
+    returned=allison.post(f'/casos/{case_id}/segunda-revision',data={
+        'csrf':token(second_page.text),'resultado':'Requiere ajustes',
+        'observaciones':'Devolución para redistribución'})
+    assert returned.status_code==303,returned.text[:300]
+    assert case_id not in allison.get('/bandeja').text
+    assert case_id in admin.get('/bandeja?vista=administracion').text
+    assert case_id in carol.get('/bandeja?vista=control').text
+    assert carol.get('/bandeja?vista=administracion').status_code==403
+    redistribution=admin.get(f'/casos/{case_id}/redistribuir')
+    assert redistribution.status_code==200,redistribution.text[:400]
+    assigned=admin.post(f'/casos/{case_id}/redistribuir',data={
+        'csrf':token(redistribution.text),'gestion':'seguimiento',
+        'destino_usuario_id':str(accounts['control']['id'])})
+    assert assigned.status_code==303,assigned.text[:300]
+    assert case_id not in admin.get('/bandeja?vista=administracion').text
+    assert case_id in carol.get('/bandeja?vista=mios').text
+    assert case_id in carol.get('/bandeja?vista=control').text
+    with SessionLocal() as db:
+        rows=db.scalars(select(CaseAssignment).where(
+            CaseAssignment.case_id==case_id)).all()
+        assert len(rows)==1 and rows[0].workflow=='seguimiento'
+        assert rows[0].user_id==accounts['control']['id']
+    assert 'Enviado a firma Directora' not in str(__import__('app.services',fromlist=['REVIEW_ACTIONS']).REVIEW_ACTIONS)
+    assert 'Enviado para firma Directora' not in str(__import__('app.services',fromlist=['FOLLOWUP_ACTIONS']).FOLLOWUP_ACTIONS)
+
