@@ -159,3 +159,17 @@
 .user-delete .btn.danger{background:#b9374c;color:#fff;border:1px solid #b9374c;justify-self:start}
 .user-delete .btn.danger:hover{background:#97273b}
 @media(max-width:650px){.user-delete .btn.danger{width:100%}}
+
+
+/* Doble bandeja: seguimiento permanente y responsable de tarea activa */
+.case-responsibility-panel{margin:0 0 18px}
+.case-responsibility-panel h2{margin-bottom:15px}
+.responsibility-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:4px 0 18px}
+.responsibility-grid>div{display:flex;flex-direction:column;gap:6px;min-width:0;padding:16px;border:1px solid #e2e7f6;background:#f8f9ff;border-radius:15px}
+.responsibility-grid strong{font-size:16px;color:#202b52;overflow-wrap:anywhere}
+.responsibility-grid span{font-size:11px;font-weight:750;color:#607099}
+.responsibility-grid small{font-size:12px;color:#73809b;line-height:1.4}
+.case-responsibility-panel .identity-editor{max-width:680px}
+.case-responsibility-panel select{padding:11px;border:1px solid #dbe1f0;border-radius:11px;background:#fff;width:100%;font:inherit;min-width:0}
+.case-responsibility-panel .identity-editor label{font-size:12px;font-weight:750}
+@media(max-width:720px){.responsibility-grid{grid-template-columns:1fr}}
