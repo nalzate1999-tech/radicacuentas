@@ -127,6 +127,14 @@ def test_invitation_activation_and_form_permissions():
         uid=target.id
         assert target.active is False
         assert target.form_permissions==['casos','revision']
+    # La invitación también se muestra cuando el administrador tiene sesión.
+    signed_in_page=admin.get('/activar/'+code)
+    assert 'name="confirm_password"' in signed_in_page.text
+    bad_signed_in=admin.post('/activar/'+code,data={
+        'csrf':token(signed_in_page.text),'password':'123','confirm_password':'123'})
+    assert bad_signed_in.status_code==400
+    assert 'name="confirm_password"' in bad_signed_in.text
+    assert 'Las contraseñas deben coincidir' in bad_signed_in.text
     user_client=TestClient(app,base_url='http://testserver',follow_redirects=False)
     page=user_client.get('/activar/'+code)
     assert page.status_code==200,page.text[:300]
@@ -573,6 +581,20 @@ def test_double_entry_queues_move_between_users():
             CaseAssignment.case_id==case_id)).all()
         assert len(rows)==1 and rows[0].workflow=='seguimiento'
         assert rows[0].user_id==accounts['control']['id']
+    # No se puede cerrar una cuenta devuelta con ajustes sin resolver.
+    rejected_close=carol.post(f'/casos/{case_id}/seguimiento',data={
+        'csrf':token(carol.get(f'/casos/{case_id}/seguimiento').text),
+        'accion':'Cerrar','observaciones':'Intento prematuro','fecha_cierre':'2026-11-24'})
+    assert rejected_close.status_code==400
+    resend=carol.post(f'/casos/{case_id}/seguimiento',data={
+        'csrf':token(carol.get(f'/casos/{case_id}/seguimiento').text),
+        'accion':'Enviado a revisor','observaciones':'Ajustes subsanados',
+        'destino_usuario_id':str(accounts['first']['id'])})
+    assert resend.status_code==303
+    approved=andrea.post(f'/casos/{case_id}/revisor',data={
+        'csrf':token(andrea.get(f'/casos/{case_id}/revisor').text),
+        'resultado':'Enviado a financiera','observaciones':'Revisión conforme'})
+    assert approved.status_code==303
     from datetime import date
     closed=carol.post(f'/casos/{case_id}/seguimiento',data={
         'csrf':token(carol.get(f'/casos/{case_id}/seguimiento').text),

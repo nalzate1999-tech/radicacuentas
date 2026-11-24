@@ -204,8 +204,16 @@ def apply_review(db,case,outcome,observations,actor):
     if outcome not in REVIEW_ACTIONS:raise BusinessError('Resultado de revisión no válido.')
     if not observations.strip():raise BusinessError('Las observaciones son obligatorias.')
     st,owner,ev=REVIEW_ACTIONS[outcome]
+    sub = db.get(Subtask, f'{case.id_caso}-REVISOR')
+    if sub is not None:
+        sub.result = outcome
+        sub.observations = observations
+        sub.active = outcome == 'Requiere ajustes'
+        sub.status = 'REQUIERE_AJUSTES' if sub.active else 'CERRADA'
+        sub.closed_at = None if sub.active else utcnow()
     change_status(db,case,st,owner)
-    add_event(db,case,ev,actor,observations,'Revisor',st,owner)
+    add_event(db,case,ev,actor,observations,'Revisor',st,owner,
+              sub.id if sub is not None else None)
     audit(db,actor,'REVISION',case.id_caso,{'resultado':outcome})
 
 def apply_followup(db,case,action,observations,actor,multi=False,fronts=None,closed_date=None):
@@ -215,6 +223,21 @@ def apply_followup(db,case,action,observations,actor,multi=False,fronts=None,clo
     if not observations.strip():raise BusinessError('Las observaciones son obligatorias.')
     if action=='Cerrar' and not closed_date:
         raise BusinessError('La fecha real de cierre financiera es obligatoria al cerrar.')
+    if action == 'Cerrar':
+        if case.current_status in ('EN_PRIMERA_REVISION', 'ENVIADA_A_SEGUNDA_REVISION',
+                                   'EN_FIRMA_REVISORA_JURIDICA', 'EN_FIRMA_REVISORA_TECNICA'):
+            raise BusinessError('No se puede cerrar mientras hay una etapa de revisión en curso.')
+        required = [kind for kind, applies in (
+            ('REVISOR', case.requires_reviewer), ('TECNICA', case.requires_technical),
+            ('JURIDICA', case.requires_legal)) if applies]
+        tasks = {task.kind: task for task in db.scalars(
+            select(Subtask).where(Subtask.case_id == case.id_caso)).all()}
+        pending = [kind for kind in required if kind not in tasks or
+                   tasks[kind].active or tasks[kind].status != 'CERRADA' or
+                   tasks[kind].result == 'Requiere ajustes']
+        if pending:
+            raise BusinessError('No se puede cerrar: hay revisiones pendientes o con ajustes: '
+                                + ', '.join(pending) + '.')
     if multi and not fronts:
         raise BusinessError('Seleccione los frentes paralelos.')
     st,owner,ev=FOLLOWUP_ACTIONS[action]
@@ -237,12 +260,15 @@ def apply_followup(db,case,action,observations,actor,multi=False,fronts=None,clo
     if action=='Cerrar':
         try:case.finance_closed_at=date.fromisoformat(closed_date)
         except ValueError:raise BusinessError('Fecha de cierre inválida.')
-    add_event(db,case,ev,actor,observations,'Seguimiento',st,owner)
     selected=[x for x in (fronts or []) if x in SUBTASK_TYPES] if multi else []
     if not multi:
-        if 'revisor' in normalize(action):selected=['REVISOR']
-        elif 'tecnica' in normalize(action):selected=['TECNICA']
-        elif 'juridica' in normalize(action):selected=['JURIDICA']
+        front = {
+            'Enviado a revisor': 'REVISOR',
+            'Enviado a firma revisora técnica': 'TECNICA',
+            'Enviado a firma revisora jurídica': 'JURIDICA',
+        }.get(action)
+        selected = [front] if front else []
+    recorded_front = False
     for front in selected:
         if front=='REVISOR' and not case.requires_reviewer:continue
         if front=='TECNICA' and not case.requires_technical:continue
@@ -254,7 +280,14 @@ def apply_followup(db,case,action,observations,actor,multi=False,fronts=None,clo
             db.add(sub)
         else:
             sub.status='EN_CURSO';sub.opened_at=utcnow();sub.active=True;sub.iterations+=1
+        sub.opened_at = utcnow()
+        sub.closed_at = None
+        sub.result = None
+        sub.observations = None
         add_event(db,case,ev,actor,observations,'Seguimiento',st,owner,sub.id)
+        recorded_front = True
+    if not recorded_front:
+        add_event(db,case,ev,actor,observations,'Seguimiento',st,owner)
     audit(db,actor,'SEGUIMIENTO',case.id_caso,{'accion':action,'frentes':selected})
 
 def apply_legal(db,case,revision_type,provider,outcome,observations,actor):
@@ -274,8 +307,10 @@ def apply_legal(db,case,revision_type,provider,outcome,observations,actor):
         sub=Subtask(id=f'{case.id_caso}-{kind}',case_id=case.id_caso,raw_case_id=case.id_caso,
                     kind=kind,source='web',created_at=utcnow())
         db.add(sub)
-    sub.provider=provider;sub.status='CERRADA';sub.active=False
-    sub.result=outcome;sub.observations=observations;sub.closed_at=utcnow()
+    sub.provider=provider
+    sub.active = outcome == 'Requiere ajustes'
+    sub.status = 'REQUIERE_AJUSTES' if sub.active else 'CERRADA'
+    sub.result=outcome;sub.observations=observations;sub.closed_at=None if sub.active else utcnow()
     if outcome=='Aprobado':
         state=('APROBADA_FIRMA_REVISORA_TECNICA' if kind=='TECNICA'
                else 'APROBADA_FIRMA_REVISORA_JURIDICA')

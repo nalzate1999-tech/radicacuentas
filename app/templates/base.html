@@ -36,7 +36,7 @@
 <nav class="nav-group" aria-label="Navegación principal">
 <a href="/panel" class="nav-item {% if request.url.path=='/panel' %}active{% endif %}"><svg class="icon"><use href="#i-grid"/></svg><span>Mi inicio</span></a>
 {% if can('casos') %}<a href="/casos" class="nav-item {% if request.url.path=='/casos' or request.url.path.startswith('/casos/') %}active{% endif %}"><svg class="icon"><use href="#i-list"/></svg><span>Expedientes</span></a>{% endif %}
-{% if can('revision') or can('seguimiento') or can('juridica') %}<a href="/bandeja" class="nav-item {% if request.url.path=='/bandeja' %}active{% endif %}"><svg class="icon"><use href="#i-review"/></svg><span>Mi bandeja</span></a>{% endif %}
+{% if can('revision') or can('segunda_revision') or can('seguimiento') or can('juridica') %}<a href="/bandeja" class="nav-item {% if request.url.path=='/bandeja' %}active{% endif %}"><svg class="icon"><use href="#i-review"/></svg><span>Mi bandeja</span></a>{% endif %}
 {% if can('registro') %}<a href="/casos/nuevo" class="nav-item {% if request.url.path=='/casos/nuevo' %}active{% endif %}"><svg class="icon"><use href="#i-plus"/></svg><span>Registrar cuenta</span></a>{% endif %}
 
 {% if can('informes') %}<a href="/informes" class="nav-item {% if request.url.path.startswith('/informes') %}active{% endif %}"><svg class="icon"><use href="#i-chart"/></svg><span>Gestión y cumplimiento</span></a>{% endif %}
