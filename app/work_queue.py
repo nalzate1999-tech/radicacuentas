@@ -9,11 +9,12 @@ from .services import normalize
 
 ARCHIVED = ('CERRADA', 'CERRADO', 'PAGADA', 'PAGADO')
 WORKFLOW_LABELS = {
-    'revision': 'Revision del supervisor',
+    'revision': 'Primera revisión',
+    'segunda_revision': 'Segunda revisión',
     'seguimiento': 'Gestion y seguimiento',
     'juridica': 'Juridica / tecnica',
 }
-WORKFLOW_PATHS = {'revision': 'revisor', 'seguimiento': 'seguimiento', 'juridica': 'abogados'}
+WORKFLOW_PATHS = {'revision': 'revisor', 'segunda_revision': 'segunda-revision', 'seguimiento': 'seguimiento', 'juridica': 'abogados'}
 
 
 def authorized_workflows(user_permissions):
@@ -21,32 +22,21 @@ def authorized_workflows(user_permissions):
 
 
 def workflow_condition(key):
-    """Only cases currently in that workflow's actionable stage."""
+    """Expedientes accionables en la etapa actual, no históricamente asignados."""
     if key == 'revision':
-        return or_(
-            Case.current_owner.ilike('Revisor'),
-            exists(select(Subtask.id).where(
-                Subtask.case_id == Case.id_caso,
-                Subtask.kind == 'REVISOR',
-                Subtask.active.is_(True),
-            )),
-        )
+        return and_(Case.current_owner == 'Revisor',
+                    Case.current_status != 'ENVIADA_A_SEGUNDA_REVISION')
+    if key == 'segunda_revision':
+        return or_(Case.current_owner == 'Segunda revisión',
+                   Case.current_status == 'ENVIADA_A_SEGUNDA_REVISION')
     if key == 'juridica':
-        return or_(
-            Case.current_owner.ilike('Firma Juridica'),
-            Case.current_owner.ilike('Firma Jur\u00eddica'),
-            Case.current_owner.ilike('Firma Tecnica'),
-            Case.current_owner.ilike('Firma T\u00e9cnica'),
-            exists(select(Subtask.id).where(
-                Subtask.case_id == Case.id_caso,
-                Subtask.kind.in_(['TECNICA', 'JURIDICA']),
-                Subtask.active.is_(True),
-            )),
-        )
+        return or_(Case.current_owner.ilike('Firma Juridica'),
+                   Case.current_owner.ilike('Firma Jurídica'),
+                   Case.current_owner.ilike('Firma Tecnica'),
+                   Case.current_owner.ilike('Firma Técnica'))
     if key == 'seguimiento':
-        return or_(Case.current_owner.ilike('Seguimiento'),
-                   Case.current_status == 'RECIBIDA')
-    raise ValueError('Tipo de gestion no reconocido.')
+        return Case.current_owner == 'Seguimiento'
+    raise ValueError('Tipo de gestión no reconocido.')
 
 
 def assignment_condition(user, workflows):
@@ -64,36 +54,34 @@ def queue_query(perms, user, workflow='', scope='mios'):
         raise PermissionError('No tiene formularios asignados.')
     if workflow and workflow not in allowed:
         raise PermissionError('No tiene permiso para ese formulario.')
-    conditions = [workflow_condition(workflow)] if workflow else [workflow_condition(k) for k in allowed]
     query = select(Case).where(
         ~Case.current_status.in_(ARCHIVED),
         Case.needs_reconciliation.is_not(True),
-        or_(*conditions),
     )
+    if scope == 'administracion':
+        if user.role != 'admin':
+            raise PermissionError('La redistribución corresponde a administración.')
+        return query.where(Case.current_owner == 'Administración')
+    if scope == 'control':
+        if 'seguimiento' not in allowed:
+            raise PermissionError('No tiene permiso de control y seguimiento.')
+        return query.where(assignment_condition(user, ['seguimiento']))
+    conditions = ([workflow_condition(workflow)] if workflow else
+                  [workflow_condition(k) for k in allowed])
+    query = query.where(or_(*conditions))
     if scope == 'mios':
-        query = query.where(assignment_condition(user, [workflow] if workflow else allowed))
-    elif scope != 'equipo':
+        return query.where(assignment_condition(user, [workflow] if workflow else allowed))
+    if scope != 'equipo':
         raise ValueError('Vista de bandeja no reconocida.')
     return query
 
 
 def recommended_workflow(case, perms, preferred=''):
+    from .assignment_flow import stage_for
     allowed = authorized_workflows(perms)
     if case.needs_reconciliation or case.current_status in ARCHIVED:
         return None
-    if preferred and preferred in allowed:
-        return WORKFLOW_PATHS[preferred]
-    owner = normalize(case.current_owner)
-    if 'revision' in allowed and ('revisor' in owner or 'segunda revision' in owner):
-        return 'revisor'
-    if 'juridica' in allowed and ('juridic' in owner or 'tecnic' in owner):
-        return 'abogados'
-    if 'seguimiento' in allowed and owner == 'seguimiento':
-        return 'seguimiento'
-    if 'seguimiento' in allowed:
-        return 'seguimiento'
-    if 'revision' in allowed and case.requires_reviewer:
-        return 'revisor'
-    if 'juridica' in allowed and (case.requires_legal or case.requires_technical):
-        return 'abogados'
+    stage = stage_for(case)
+    if stage in allowed and (not preferred or stage == preferred):
+        return WORKFLOW_PATHS[stage]
     return None
