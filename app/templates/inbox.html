@@ -9,7 +9,7 @@
 <section class="panel inbox-intro">
  <div class="inbox-intro-icon"><svg class="icon"><use href="#i-review"/></svg></div>
  <div><strong>{{ total }} casos para gestionar</strong>
- <p>{{ 'Coinciden con tu nombre o correo registrado.' if vista=='mios' else 'Casos pendientes del equipo, segun los formularios que tienes autorizados.' }} Los finalizados no aparecen aqui.</p></div>
+ <p>{{ 'Tareas que te corresponden ahora.' if vista=='mios' else ('Expedientes que debes vigilar hasta su cierre.' if vista=='control' else ('Devoluciones que debes repartir.' if vista=='administracion' else 'Casos disponibles para consulta de tu equipo.')) }} Los finalizados no aparecen aquí.</p></div>
 </section>
 <section class="panel case-search-panel">
  <form action="/bandeja" method="get" class="filters inbox-filters" role="search" aria-label="Buscar en la bandeja">
@@ -18,8 +18,10 @@
    <input id="inbox-q" type="search" name="q" maxlength="140" value="{{ q }}" autocomplete="off" placeholder="Contratista, contrato, documento o persona" enterkeyhint="search"/></div>
   </div>
   <div><label for="inbox-view">Bandeja</label><select id="inbox-view" name="vista">
-   <option value="mios" {% if vista=='mios' %}selected{% endif %}>Asignados a mi</option>
-   <option value="equipo" {% if vista=='equipo' %}selected{% endif %}>Pendientes del equipo</option>
+   <option value="mios" {% if vista=='mios' %}selected{% endif %}>Mis tareas activas</option>
+   {% if can_control %}<option value="control" {% if vista=='control' %}selected{% endif %}>Control permanente</option>{% endif %}
+   {% if admin %}<option value="administracion" {% if vista=='administracion' %}selected{% endif %}>Devoluciones por repartir</option>{% endif %}
+   <option value="equipo" {% if vista=='equipo' %}selected{% endif %}>Consulta del equipo</option>
   </select></div>
   <div><label for="inbox-form">Formulario</label><select id="inbox-form" name="gestion">
    <option value="">Todos mis formularios</option>
@@ -49,7 +51,9 @@
   <div class="inbox-case-side">
    <span class="sla {{ 'danger' if sla_color(c)=='Vencido' else ('warning' if sla_color(c)=='Por vencer' else '') }}">{{ sla_color(c) }}</span>
    <small>{{ c.sla_due or 'Sin fecha limite' }}</small>
-   {% if actions[c.id_caso] %}<a class="btn primary" href="/casos/{{ c.id_caso }}/{{ actions[c.id_caso] }}">Registrar novedad <svg class="icon"><use href="#i-arrow"/></svg></a>{% else %}<a class="btn" href="/casos/{{ c.id_caso }}">Consultar expediente</a>{% endif %}
+   {% if actions[c.id_caso] %}
+   <a class="btn primary" href="/casos/{{ c.id_caso }}/{{ actions[c.id_caso] }}">{{ 'Redistribuir' if actions[c.id_caso]=='redistribuir' else ('Registrar control' if vista=='control' else 'Registrar novedad') }} <svg class="icon"><use href="#i-arrow"/></svg></a>
+   {% else %}<a class="btn" href="/casos/{{ c.id_caso }}">Consultar expediente</a>{% endif %}
   </div>
  </article>
  {% else %}
@@ -63,5 +67,5 @@
   {% if page<pages %}<a class="btn" href="?q={{ q|urlencode }}&vista={{ vista|urlencode }}&gestion={{ gestion|urlencode }}&sla={{ sla|urlencode }}&page={{ page+1 }}">Siguiente</a>{% endif %}
  </div></div>
 </section>
-<p class="fine">La asignacion personal se reconoce por coincidencia de nombre o correo; los permisos para registrar novedades se comprueban en el servidor.</p>
+<p class="fine">Cada trámite tiene una tarea activa asignada a una persona y un titular de control permanente. Al registrar un envío, la tarea pasa al destinatario seleccionado. Los permisos se verifican en el servidor.</p>
 {% endblock %}
