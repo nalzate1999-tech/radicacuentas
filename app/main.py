@@ -300,13 +300,25 @@ def dashboard(request:Request,db:Session=Depends(db_session)):
     u=require_user(request,db)
     if not user_permissions(u):
         return render(request,db,'dashboard.html',total=0,closed=0,overdue=0,movements=0,by_status=[],recent=[],sla_color=sla_color,recent_age={},inbox=[],inbox_count=0,inbox_scope='mios',inbox_actions={})
-    total=db.scalar(select(func.count()).select_from(Case)) or 0
-    closed=db.scalar(select(func.count()).select_from(Case).where(Case.current_status.in_(ARCHIVED_STATUSES))) or 0
+    visible_cases = (select(Case) if u.role == 'admin'
+                     else select(Case).where(~Case.current_status.in_(ARCHIVED_STATUSES)))
+    total=db.scalar(select(func.count()).select_from(visible_cases.subquery())) or 0
+    closed=(db.scalar(select(func.count()).select_from(Case)
+               .where(Case.current_status.in_(ARCHIVED_STATUSES))) or 0) if u.role == 'admin' else 0
     now=datetime.now(BOGOTA).date()
     overdue=db.scalar(select(func.count()).select_from(Case).where(Case.sla_due<now,~Case.current_status.in_([*ARCHIVED_STATUSES, 'EN_MESA_DIRECTIVA', 'ENVIADA_A_FINANCIERA']))) or 0
-    events=db.scalar(select(func.count()).select_from(Event)) or 0
-    by_status=db.execute(select(Case.current_status,func.count(Case.id_caso)).group_by(Case.current_status).order_by(desc(func.count(Case.id_caso))).limit(12)).all()
-    recent=db.scalars(select(Case).order_by(desc(Case.created_at),desc(Case.id_caso)).limit(12)).all()
+    events=(db.scalar(select(func.count()).select_from(Event)) or 0) if u.role == 'admin' else (
+        db.scalar(select(func.count()).select_from(Event)
+                  .join(Case, Event.case_id == Case.id_caso)
+                  .where(~Case.current_status.in_(ARCHIVED_STATUSES))) or 0)
+    by_status=db.execute(
+        select(Case.current_status,func.count(Case.id_caso))
+        .where(True if u.role == 'admin' else ~Case.current_status.in_(ARCHIVED_STATUSES))
+        .group_by(Case.current_status)
+        .order_by(desc(func.count(Case.id_caso))).limit(12)
+    ).all()
+    recent=db.scalars(visible_cases.order_by(desc(Case.created_at),desc(Case.id_caso))
+                      .limit(12)).all()
     inbox_scope='equipo' if u.role=='admin' else 'mios'
     inbox=[];inbox_count=0;inbox_actions={}
     perms=user_permissions(u)
@@ -448,8 +460,12 @@ def cases(request:Request,q:str='',estado:str='',periodo:str='',accion:str='',
         raise HTTPException(400, 'Filtro no reconocido.')
     if sla and sla not in SLA_FILTERS:
         raise HTTPException(400, 'Estado SLA no reconocido.')
-    # Los expedientes cerrados se mantienen en busqueda e historico; no en tareas.
-    effective_view = 'pendientes' if accion else vista
+    # Las cuentas archivadas son exclusivamente de consulta administrativa.
+    user = require_user(request, db)
+    if user.role != 'admin' and vista == 'cerrados':
+        raise HTTPException(403, 'El archivo de cuentas cerradas es exclusivo de administración.')
+    # Los usuarios operativos no pueden recuperar cuentas archivadas con filtros.
+    effective_view = 'pendientes' if (accion or user.role != 'admin') else vista
     query=select(Case)
     if effective_view == 'pendientes':
         query=query.where(~Case.current_status.in_(ARCHIVED_STATUSES))
@@ -533,6 +549,9 @@ def case_detail(request:Request,case_id:str,event_page:int=1,db:Session=Depends(
     require_permission(request,db,'casos')
     case=db.get(Case,case_id)
     if not case:raise HTTPException(404,'Caso no encontrado')
+    if (case.current_status in ARCHIVED_STATUSES
+            and require_user(request, db).role != 'admin'):
+        raise HTTPException(403, 'El historial de cuentas cerradas es exclusivo de administración.')
     event_page=max(1,event_page)
     events=db.scalars(select(Event).where(Event.case_id==case_id)
                       .order_by(Event.occurred_at.desc(),Event.id.desc())

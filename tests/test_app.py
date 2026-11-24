@@ -587,3 +587,28 @@ def test_double_entry_queues_move_between_users():
     assert 'Enviado a firma Directora' not in str(__import__('app.services',fromlist=['REVIEW_ACTIONS']).REVIEW_ACTIONS)
     assert 'Enviado para firma Directora' not in str(__import__('app.services',fromlist=['FOLLOWUP_ACTIONS']).FOLLOWUP_ACTIONS)
 
+
+
+def test_closed_cases_are_admin_only_across_routes():
+    """El archivo administrativo no debe filtrarse por listas, detalle ni panel."""
+    from datetime import datetime, timezone
+    marker=uuid.uuid4().hex[:10]
+    case_id='QA-ARCHIVE-'+marker
+    with SessionLocal.begin() as db:
+        db.add(Case(id_caso=case_id,source='web',contractor_name='ARCHIVED-SECRET-'+marker,
+                    contract_no='ARCH-CONTRACT-'+marker,period='202611',
+                    current_status='CERRADA',current_owner='Seguimiento',
+                    created_at=datetime.now(timezone.utc),
+                    registered_at=datetime.now(timezone.utc)))
+    viewer=client_as('viewer@example.org')
+    admin=client_as('qa@example.org')
+    assert viewer.get('/casos?vista=cerrados').status_code==403
+    for url in ('/casos', '/casos?vista=todos', '/casos?estado=CERRADA',
+                '/casos?q='+marker, '/panel'):
+        response=viewer.get(url)
+        assert response.status_code==200,(url,response.status_code)
+        assert case_id not in response.text,url
+        assert 'ARCHIVED-SECRET-'+marker not in response.text,url
+    assert viewer.get('/casos/'+case_id).status_code==403
+    assert case_id in admin.get('/casos?vista=cerrados&q='+marker).text
+    assert admin.get('/casos/'+case_id).status_code==200
